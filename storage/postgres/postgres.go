@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -473,11 +472,12 @@ func (b *PostgresBackend) enqueueStmts(a *storage.QueuedActivity) ([]stmt, error
 
 	var event stmt
 	if a.ScheduledAt != nil {
-		event = b.eventStmt(a.ID, storage.EventScheduled, nil, toDetail(map[string]any{"scheduled_at": a.ScheduledAt}))
+		event = b.eventStmt(a.ID, storage.EventScheduled, nil, toDetail(map[string]any{
+			"activity_type": a.ActivityType, "priority": int(a.Priority), "scheduled_at": a.ScheduledAt,
+		}))
 	} else {
 		event = b.eventStmt(a.ID, storage.EventEnqueued, nil, toDetail(map[string]any{
-			"priority":     strconv.Itoa(a.Priority),
-			"scheduled_at": a.ScheduledAt,
+			"activity_type": a.ActivityType, "priority": int(a.Priority),
 		}))
 	}
 	return append(stmts, event), nil
@@ -535,7 +535,7 @@ const (
 		), dequeued AS (
 			INSERT INTO runnerq_events (activity_id, queue_name, event_type, worker_id, detail, created_at)
 			SELECT id, $3::text, '` + storage.EventDequeued + `', current_worker_id,
-				jsonb_build_object('lease_deadline_ms', lease_deadline_ms), $4::timestamptz
+				jsonb_build_object('activity_type', activity_type, 'lease_deadline_ms', lease_deadline_ms), $4::timestamptz
 			FROM claimed
 		)
 		SELECT * FROM claimed`
@@ -867,11 +867,7 @@ func (b *PostgresBackend) ackSuccess(ctx context.Context, activityID uuid.UUID, 
 	// and would otherwise hang. Same transaction, so completion and result are
 	// atomic.
 	ar := &storage.ActivityResult{Data: result, State: storage.ResultOk, Serialization: serialization}
-	actTypeStr := ""
-	if actType != nil {
-		actTypeStr = *actType
-	}
-	detail := toDetail(map[string]any{"activity_type": actTypeStr, "result_stored": true})
+	detail := toDetail(map[string]any{"result_stored": true})
 	if err := execAll(ctx, tx, append(b.resultStmts(activityID, activityID, ar, now, ""),
 		b.eventStmt(activityID, storage.EventCompleted, &workerID, detail))...); err != nil {
 		return err
@@ -968,10 +964,10 @@ func (b *PostgresBackend) AckFailure(ctx context.Context, activityID uuid.UUID, 
 	// Terminal: non-retryable fails; retryable but out of attempts dead-letters.
 	deadLetter := failure.Retryable
 	status, resultType, eventType := "failed", "non_retryable", storage.EventFailed
-	eventDetail := map[string]any{"retryable": false, "error": errorMessage}
+	eventDetail := map[string]any{"error": errorMessage}
 	if deadLetter {
 		status, resultType, eventType = "dead_letter", "dead_letter", storage.EventDeadLetter
-		eventDetail = map[string]any{"error": errorMessage}
+		eventDetail["reason"] = "attempts_exhausted"
 	}
 	res := &storage.ActivityResult{Data: toDetail(withFailure(map[string]any{
 		"error":     errorMessage,
@@ -1093,7 +1089,7 @@ func (b *PostgresBackend) RequeueExpired(ctx context.Context, batchSize int) (ui
 			continue
 		}
 		stmts = append(stmts, b.eventStmt(r.id, storage.EventRequeued, nil,
-			toDetail(map[string]any{"retry_count": r.retryCount, "reason": "lease_expired"})))
+			toDetail(map[string]any{"retry_count": r.retryCount, "reason": "lease_expired", "error": leaseExpiredError})))
 	}
 	if err := execAll(ctx, tx, stmts...); err != nil {
 		return 0, err
@@ -1152,7 +1148,7 @@ func (b *PostgresBackend) Yield(ctx context.Context, activityID uuid.UUID, wakeA
 	}
 
 	// kind/step let the console show why it is waiting.
-	yieldDetail := map[string]any{"wake_at": wakeAt.Format(time.RFC3339)}
+	yieldDetail := map[string]any{"wake_at": wakeAt.Format(time.RFC3339), "result_id": nil, "ready": false}
 	if kind != "" {
 		yieldDetail["kind"] = kind
 	}
@@ -1496,7 +1492,7 @@ func (b *PostgresBackend) StoreResult(ctx context.Context, activityID uuid.UUID,
 		return err
 	}
 	if err := b.recordEvent(ctx, tx, activityID, storage.EventResultStored, nil,
-		toDetail(map[string]any{"result_stored": true, "state": stateStr})); err != nil {
+		toDetail(map[string]any{"state": stateStr})); err != nil {
 		return err
 	}
 
