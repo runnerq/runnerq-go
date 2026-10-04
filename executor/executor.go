@@ -107,6 +107,10 @@ type Change struct {
 	// Attempt is set for AttemptStarted and AttemptSucceeded.
 	Attempt int
 	At      time.Time
+	// ExecutorID is the executor that made the change, when the reporter
+	// knows it from the claim (a storage backend does; an engine's own
+	// changes leave it empty).
+	ExecutorID string
 }
 
 // Announcer hears every Change an engine makes, as it makes it, from the

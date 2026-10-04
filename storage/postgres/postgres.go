@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/alob-mtc/runnerq-go/executor"
 	"github.com/alob-mtc/runnerq-go/internal/spec"
 	"github.com/alob-mtc/runnerq-go/storage"
 )
@@ -32,6 +33,7 @@ type PostgresBackend struct {
 	sig       *signaler
 	watcherMu sync.Mutex
 	watch     *watcher
+	announcer atomic.Pointer[executor.Announcer]
 }
 
 // New creates a backend with pool size 25 and a 60s lease, creating or
@@ -411,7 +413,7 @@ func (b *PostgresBackend) enqueue(ctx context.Context, a storage.QueuedActivity,
 		if err := execAll(ctx, b.pool, stmts...); err != nil {
 			return err
 		}
-		b.signalEnqueued(&a)
+		b.enqueued(&a)
 		return nil
 	}
 
@@ -429,15 +431,24 @@ func (b *PostgresBackend) enqueue(ctx context.Context, a storage.QueuedActivity,
 	if err := tx.Commit(ctx); err != nil {
 		return databaseError(err, fmt.Sprintf("Failed to commit enqueue: %v", err))
 	}
-	b.signalEnqueued(&a)
+	b.enqueued(&a)
 	return nil
 }
 
-// Future-scheduled rows are found by blocked dequeuers' periodic probes.
-func (b *PostgresBackend) signalEnqueued(a *storage.QueuedActivity) {
-	if a.ScheduledAt == nil || !a.ScheduledAt.After(time.Now().UTC()) {
+// enqueued follows a committed new submission: it wakes blocked dequeuers
+// (future-scheduled rows are found by their periodic probes) and announces it.
+func (b *PostgresBackend) enqueued(a *storage.QueuedActivity) {
+	scheduled := a.ScheduledAt != nil && a.ScheduledAt.After(time.Now().UTC())
+	if !scheduled {
 		b.signalWork()
 	}
+	kind := executor.Created
+	if scheduled {
+		kind = executor.Scheduled
+	}
+	b.announce(func() executor.Change {
+		return executor.Change{Kind: kind, ActivityID: a.ID, ActivityType: a.ActivityType, RootID: rootOf(a), At: a.CreatedAt}
+	})
 }
 
 // enqueueStmts are returned rather than run so callers can make the enqueue
@@ -698,6 +709,7 @@ func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, acti
 		return nil, databaseError(err, fmt.Sprintf("Failed to dequeue: %v", err))
 	}
 	a := &claim.Activity
+	b.announceClaims(workerID, claim)
 	slog.Debug("Activity claimed",
 		"activity_id", a.ID,
 		"activity_type", a.ActivityType,
@@ -788,6 +800,7 @@ func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix s
 		}
 		return dueAt(a).Compare(dueAt(b))
 	})
+	b.announceClaims(workerIDPrefix, claims...)
 	slog.Debug("Activities claimed", "count", len(claims), "limit", limit)
 	return claims, nil
 }
@@ -817,7 +830,11 @@ func (b *PostgresBackend) ackSuccess(ctx context.Context, activityID uuid.UUID, 
 	}
 	defer tx.Rollback(ctx)
 
-	var actType *string
+	var (
+		actType *string
+		rootID  uuid.UUID
+		retries int32
+	)
 	err = tx.QueryRow(ctx, `
 		UPDATE runnerq_activities
 		SET status = 'completed',
@@ -828,8 +845,8 @@ func (b *PostgresBackend) ackSuccess(ctx context.Context, activityID uuid.UUID, 
 		WHERE id = $3 AND queue_name = $4
 		  AND status = 'processing'
 		  AND current_worker_id = $2
-		RETURNING activity_type`,
-		now, workerID, activityID, b.queueName).Scan(&actType)
+		RETURNING activity_type, COALESCE(root_activity_id, id), retry_count`,
+		now, workerID, activityID, b.queueName).Scan(&actType, &rootID, &retries)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			// Reconcile a previous commit whose reply was lost.
@@ -872,6 +889,14 @@ func (b *PostgresBackend) ackSuccess(ctx context.Context, activityID uuid.UUID, 
 
 	b.signalResult(activityID)
 	b.signalWork()
+	b.announce(func() executor.Change {
+		c := executor.Change{Kind: executor.AttemptSucceeded, ActivityID: activityID, RootID: rootID,
+			Attempt: int(retries) + 1, At: now, ExecutorID: executorOf(workerID)}
+		if actType != nil {
+			c.ActivityType = *actType
+		}
+		return c
+	})
 	return nil
 }
 
@@ -1597,7 +1622,7 @@ func (b *PostgresBackend) tryEnqueueIdempotent(ctx context.Context, a *storage.Q
 		if err := tx.Commit(ctx); err != nil {
 			return nil, false, databaseError(err, fmt.Sprintf("Failed to commit idempotent enqueue: %v", err))
 		}
-		b.signalEnqueued(a)
+		b.enqueued(a)
 		return nil, true, nil
 	}
 
@@ -1634,7 +1659,7 @@ func (b *PostgresBackend) tryEnqueueIdempotent(ctx context.Context, a *storage.Q
 		if err := tx.Commit(ctx); err != nil {
 			return nil, false, databaseError(err, fmt.Sprintf("Failed to commit idempotent enqueue: %v", err))
 		}
-		b.signalEnqueued(a)
+		b.enqueued(a)
 		return nil, true, nil
 	}
 
