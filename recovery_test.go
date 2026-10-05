@@ -592,3 +592,13 @@ func TestEngineExecutorOnHandlerContextSpawnsChildren(t *testing.T) {
 		}
 	}
 }
+
+func TestIsYield(t *testing.T) {
+	y := &yieldPark{wakeAt: time.Now(), kind: "await", step: "await:x"}
+	if !IsYield(y) || !IsYield(fmt.Errorf("charge: %w", y)) {
+		t.Fatal("the park sentinel, bare or wrapped, is a yield")
+	}
+	if IsYield(NewRetryError("down")) || IsYield(nil) {
+		t.Fatal("other errors are not yields")
+	}
+}

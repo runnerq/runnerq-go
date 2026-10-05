@@ -200,8 +200,9 @@ available or `ctx` is done.
 - **Inside a handler**, awaiting a child parks the parent durably after a
   short grace — see [Durable Execution](durable-execution.md). "Inside" means
   on the handler's context, however deep in the call stack: a helper awaiting
-  on that context returns the park sentinel too, and must return it unchanged
-  to the handler, which returns it unchanged. Don't await inside a
+  on that context returns the park sentinel too (`runnerq.IsYield` recognizes
+  it), and must return it unchanged, or wrapped with `%w`, to the handler,
+  which returns it. Don't await inside a
   `RunStep`/`Run` function; await between steps.
 
 A failed activity surfaces as a `*WorkerError`:

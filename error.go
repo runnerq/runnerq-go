@@ -169,6 +169,15 @@ func IsActivityNotFound(err error) bool {
 	return ok && we.Kind == ErrActivityNotFoundW
 }
 
+// IsYield reports whether err is the sentinel a durable wait (Sleep,
+// WaitForSignal, or GetResult on a handler's context) returns to park the
+// activity. Code between the wait and the handler must return it unchanged
+// (or wrapped with %w) rather than treat it as a failure.
+func IsYield(err error) bool {
+	var y *yieldPark
+	return errors.As(err, &y)
+}
+
 // IsWorkerError returns the *WorkerError in err's chain, if any.
 func IsWorkerError(err error) (*WorkerError, bool) {
 	var we *WorkerError
