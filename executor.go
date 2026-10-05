@@ -301,11 +301,13 @@ func (b *ActivityBuilder) Execute(ctx context.Context) (*ActivityFuture, error) 
 }
 
 // ActivityExecutor spawns activities. An ActivityContext's spawns children of
-// the running activity. The engine's (GetActivityExecutor) spawns roots, except
-// on a handler's context (ActivityContext.Ctx or one derived from it), where it
-// too spawns children of that handler's activity, so code a handler calls
-// needn't be handed its executor. AsRoot opts out. Name the target with
-// Activity or ActivityNamed.
+// the running activity, fenced on the handler's claim so a superseded
+// execution can't spawn. The engine's (GetActivityExecutor) spawns roots,
+// except on a handler's context (ActivityContext.Ctx or one derived from it),
+// where it records the spawn as a child of that handler's activity, so code a
+// handler calls needn't be handed its executor; those spawns are not fenced and
+// cost what a root spawn does. AsRoot opts out. Name the target with Activity
+// or ActivityNamed.
 type ActivityExecutor struct {
 	queue    activityQueue
 	maxDepth uint16
@@ -389,7 +391,12 @@ func (w *ActivityExecutor) ActivityNamed(activityType string) *ActivityBuilder {
 func (w *ActivityExecutor) executeActivity(ctx context.Context, activityType string, payload json.RawMessage, option *ActivityOption, asRoot bool, step string) (*ActivityFuture, error) {
 	if w.lineage == nil && !asRoot {
 		if scoped := w.handlerScope(ctx); scoped != nil {
-			return scoped.executeActivity(ctx, activityType, payload, option, false, step)
+			// Lineage only: the spawn keeps this executor's unfenced insert, so
+			// it costs what a root spawn does. ctx.ActivityExecutor also fences
+			// the insert on the handler's claim.
+			child := *w
+			child.lineage = scoped.lineage
+			return child.executeActivity(ctx, activityType, payload, option, false, step)
 		}
 	}
 	a := newActivity(activityType, payload, option)

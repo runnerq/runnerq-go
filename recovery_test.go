@@ -547,8 +547,9 @@ func (q *lineageQueue) EnqueueIdempotent(_ context.Context, a *activity) (*stora
 }
 
 // The engine's executor spawning on a handler's context spawns children of
-// that handler, so code the handler calls needn't be handed its executor.
-// AsRoot, an unrelated context or another queue's executor spawn roots.
+// that handler, so code the handler calls needn't be handed its executor, and
+// inserts them unfenced, as cheaply as roots. AsRoot, an unrelated context or
+// another queue's executor spawn roots.
 func TestEngineExecutorOnHandlerContextSpawnsChildren(t *testing.T) {
 	q := &lineageQueue{recoveryQueue: recoveryQueue{complete: func(context.Context, *activity, json.RawMessage, string) error { return nil }}}
 	other := &lineageQueue{}
@@ -574,10 +575,15 @@ func TestEngineExecutorOnHandlerContextSpawnsChildren(t *testing.T) {
 		}
 		return nil, nil
 	}})
+	fenced := &spawnProbe{}
+	e.backend = fenced
 	parent := newActivity("test", nil, nil)
 	parent.TimeoutSeconds = 30
 	e.processActivity(context.Background(), parent, "claim", 0)
 
+	if fenced.spawns != 0 {
+		t.Fatalf("%d spawns took the fenced insert", fenced.spawns)
+	}
 	spawned := append(q.spawned, other.spawned...)
 	if len(spawned) != 6 {
 		t.Fatalf("spawned %d activities, want 6", len(spawned))

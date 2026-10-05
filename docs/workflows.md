@@ -189,6 +189,13 @@ handler calls can keep an engine executor and still record their spawns under
 the running activity, as long as they pass the context along. Spawns on any
 other context, or with `.AsRoot()`, are roots.
 
+The two differ in one way: `ctx.ActivityExecutor` fences each spawn on the
+handler's claim (a superseded execution can't spawn, at the cost of locking the
+parent row in the insert's transaction), while the engine's executor only
+records the lineage and inserts as a root spawn does. Use `ctx.ActivityExecutor`
+where a duplicate spawn from a superseded execution would matter and no
+idempotency key or `.Step` already dedupes it.
+
 ## Getting results
 
 `future.GetResult(ctx)` returns the activity's result, blocking until it's
