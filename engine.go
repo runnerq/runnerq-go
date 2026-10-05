@@ -295,8 +295,9 @@ func isNilHandler(handler ActivityHandler) bool {
 	return false
 }
 
-// GetActivityExecutor returns an executor for spawning root activities from
-// outside a handler.
+// GetActivityExecutor returns an executor for spawning root activities. On a
+// handler's context it spawns children of that handler's activity instead
+// (see ActivityExecutor).
 func (e *WorkerEngine) GetActivityExecutor() *ActivityExecutor {
 	return newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce)
 }
@@ -647,8 +648,9 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 	// The attempt queue on the context lets in-handler GetResult calls
 	// yield-park this activity.
 	attemptQ := &attemptQueue{activityQueue: e.queue, backend: e.backend, owner: act.ID, worker: workerLabel, persistenceCtx: ctx, metrics: e.metrics, awaitGrace: e.awaitGrace}
-	timeoutCtx = context.WithValue(timeoutCtx, attemptQueueKey{}, attemptQ)
 	scopedExecutor := newActivityExecutor(attemptQ, e.config.MaxActivityDepth, e.announce).scopedForChild(act)
+	timeoutCtx = context.WithValue(timeoutCtx, attemptQueueKey{}, attemptQ)
+	timeoutCtx = context.WithValue(timeoutCtx, childScopeKey{}, scopedExecutor)
 
 	actCtx := ActivityContext{
 		ActivityID:       activityID,
