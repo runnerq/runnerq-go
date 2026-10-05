@@ -531,3 +531,80 @@ func TestHandlerSpawnsCarryTheExecutionClaim(t *testing.T) {
 		t.Fatalf("spawns=%d owner=%s worker=%s failed=%v metrics=%v", b.spawns, b.owner, b.worker, failed, e.metrics)
 	}
 }
+
+type lineageQueue struct {
+	recoveryQueue
+	spawned []*activity
+}
+
+func (q *lineageQueue) Enqueue(_ context.Context, a *activity) error {
+	q.spawned = append(q.spawned, a)
+	return nil
+}
+func (q *lineageQueue) EnqueueIdempotent(_ context.Context, a *activity) (*storage.IdempotencyResult, error) {
+	q.spawned = append(q.spawned, a)
+	return nil, nil
+}
+
+// The engine's executor spawning on a handler's context spawns children of
+// that handler, so code the handler calls needn't be handed its executor, and
+// inserts them unfenced, as cheaply as roots. AsRoot, an unrelated context or
+// another queue's executor spawn roots.
+func TestEngineExecutorOnHandlerContextSpawnsChildren(t *testing.T) {
+	q := &lineageQueue{recoveryQueue: recoveryQueue{complete: func(context.Context, *activity, json.RawMessage, string) error { return nil }}}
+	other := &lineageQueue{}
+	var e *WorkerEngine
+	e = recoveryEngine(q, &funcHandler{fn: func(c ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
+		derived, cancel := context.WithCancel(c.Ctx)
+		defer cancel()
+		root := e.GetActivityExecutor()
+		for _, b := range []struct {
+			ctx context.Context
+			b   *ActivityBuilder
+		}{
+			{c.Ctx, root.ActivityNamed("child")},
+			{derived, root.ActivityNamed("child")},
+			{c.Ctx, root.ActivityNamed("child").Step("s")},
+			{c.Ctx, root.ActivityNamed("root").AsRoot()},
+			{context.Background(), root.ActivityNamed("root")},
+			{c.Ctx, newActivityExecutor(other, 0, nil).ActivityNamed("root")},
+		} {
+			if _, err := b.b.Payload(json.RawMessage(`{}`)).Execute(b.ctx); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	}})
+	fenced := &spawnProbe{}
+	e.backend = fenced
+	parent := newActivity("test", nil, nil)
+	parent.TimeoutSeconds = 30
+	e.processActivity(context.Background(), parent, "claim", 0)
+
+	if fenced.spawns != 0 {
+		t.Fatalf("%d spawns took the fenced insert", fenced.spawns)
+	}
+	spawned := append(q.spawned, other.spawned...)
+	if len(spawned) != 6 {
+		t.Fatalf("spawned %d activities, want 6", len(spawned))
+	}
+	for i, a := range spawned {
+		child := a.ActivityType == "child"
+		if hasParent := a.ParentActivityID != nil; hasParent != child {
+			t.Fatalf("spawn %d (%s): parent=%v", i, a.ActivityType, a.ParentActivityID)
+		}
+		if child && (*a.ParentActivityID != parent.ID || a.RootActivityID != parent.ID || a.Depth != 1) {
+			t.Fatalf("spawn %d: parent=%s root=%s depth=%d, want parent=root=%s depth=1", i, a.ParentActivityID, a.RootActivityID, a.Depth, parent.ID)
+		}
+	}
+}
+
+func TestIsYield(t *testing.T) {
+	y := &yieldPark{wakeAt: time.Now(), kind: "await", step: "await:x"}
+	if !IsYield(y) || !IsYield(fmt.Errorf("charge: %w", y)) {
+		t.Fatal("the park sentinel, bare or wrapped, is a yield")
+	}
+	if IsYield(NewRetryError("down")) || IsYield(nil) {
+		t.Fatal("other errors are not yields")
+	}
+}

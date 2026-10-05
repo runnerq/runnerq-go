@@ -206,7 +206,8 @@ func (b *ActivityBuilder) IdempotencyKeyOption(key string, behavior OnDuplicate)
 //
 // Step names must be stable across retries and unique among the parent's
 // spawns (two spawns sharing a name resolve to one child). Only valid inside
-// a handler; incompatible with AsRoot and IdempotencyKeyOption.
+// a handler (its ActivityExecutor, or any executor of its queue on its
+// context); incompatible with AsRoot and IdempotencyKeyOption.
 func (b *ActivityBuilder) Step(name string) *ActivityBuilder {
 	b.step = name
 	return b
@@ -221,8 +222,8 @@ func (b *ActivityBuilder) Metadata(key, value string) *ActivityBuilder {
 	return b
 }
 
-// AsRoot makes the spawn a root (no parent, depth 0) even inside a handler,
-// for side jobs whose lifecycle is independent of the parent.
+// AsRoot makes the spawn a root (no parent, depth 0) even inside a handler or
+// on its context, for side jobs whose lifecycle is independent of the parent.
 func (b *ActivityBuilder) AsRoot() *ActivityBuilder {
 	b.asRoot = true
 	return b
@@ -299,9 +300,14 @@ func (b *ActivityBuilder) Execute(ctx context.Context) (*ActivityFuture, error) 
 	return b.exec.executeActivity(ctx, b.activityType, b.payload, option, b.asRoot, b.step)
 }
 
-// ActivityExecutor spawns activities: roots from the engine's
-// (GetActivityExecutor), children of the running activity from an
-// ActivityContext's. Name the target with Activity or ActivityNamed.
+// ActivityExecutor spawns activities. An ActivityContext's spawns children of
+// the running activity, fenced on the handler's claim so a superseded
+// execution can't spawn. The engine's (GetActivityExecutor) spawns roots,
+// except on a handler's context (ActivityContext.Ctx or one derived from it),
+// where it records the spawn as a child of that handler's activity, so code a
+// handler calls needn't be handed its executor; those spawns are not fenced and
+// cost what a root spawn does. AsRoot opts out. Name the target with Activity
+// or ActivityNamed.
 type ActivityExecutor struct {
 	queue    activityQueue
 	maxDepth uint16
@@ -313,6 +319,23 @@ type lineageScope struct {
 	parentID   uuid.UUID
 	rootID     uuid.UUID
 	childDepth uint16 // parent.Depth + 1
+}
+
+// childScopeKey carries a handler's child-scoped ActivityExecutor on its
+// context, for root executors spawning on that context.
+type childScopeKey struct{}
+
+// handlerScope returns the child-scoped executor of the handler running on
+// ctx when it spawns into w's queue, or nil.
+func (w *ActivityExecutor) handlerScope(ctx context.Context) *ActivityExecutor {
+	scoped, ok := ctx.Value(childScopeKey{}).(*ActivityExecutor)
+	if !ok {
+		return nil
+	}
+	if aq, ok := scoped.queue.(*attemptQueue); !ok || aq.activityQueue != w.queue {
+		return nil
+	}
+	return scoped
 }
 
 func newActivityExecutor(queue activityQueue, maxDepth uint16, announce *announcer) *ActivityExecutor {
@@ -366,6 +389,16 @@ func (w *ActivityExecutor) ActivityNamed(activityType string) *ActivityBuilder {
 }
 
 func (w *ActivityExecutor) executeActivity(ctx context.Context, activityType string, payload json.RawMessage, option *ActivityOption, asRoot bool, step string) (*ActivityFuture, error) {
+	if w.lineage == nil && !asRoot {
+		if scoped := w.handlerScope(ctx); scoped != nil {
+			// Lineage only: the spawn keeps this executor's unfenced insert, so
+			// it costs what a root spawn does. ctx.ActivityExecutor also fences
+			// the insert on the handler's claim.
+			child := *w
+			child.lineage = scoped.lineage
+			return child.executeActivity(ctx, activityType, payload, option, false, step)
+		}
+	}
 	a := newActivity(activityType, payload, option)
 
 	if w.lineage != nil && !asRoot {

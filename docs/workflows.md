@@ -182,6 +182,20 @@ crash-safe (see [Durable Execution](durable-execution.md)). `MaxActivityDepth`
 (default 32) caps recursion depth. `.AsRoot()` detaches a spawn from its
 parent's lineage for fire-and-forget side jobs.
 
+Lineage follows the context, not only the executor: the engine's executor
+(`engine.GetActivityExecutor()`) spawning on a handler's context (`ctx.Ctx`, or
+any context derived from it) spawns a child of that handler too. So services a
+handler calls can keep an engine executor and still record their spawns under
+the running activity, as long as they pass the context along. Spawns on any
+other context, or with `.AsRoot()`, are roots.
+
+The two differ in one way: `ctx.ActivityExecutor` fences each spawn on the
+handler's claim (a superseded execution can't spawn, at the cost of locking the
+parent row in the insert's transaction), while the engine's executor only
+records the lineage and inserts as a root spawn does. Use `ctx.ActivityExecutor`
+where a duplicate spawn from a superseded execution would matter and no
+idempotency key or `.Step` already dedupes it.
+
 ## Getting results
 
 `future.GetResult(ctx)` returns the activity's result, blocking until it's
@@ -191,7 +205,12 @@ available or `ctx` is done.
   blocks — notification-driven, with a slow poll fallback, and works even if a
   different process produced the result.
 - **Inside a handler**, awaiting a child parks the parent durably after a
-  short grace — see [Durable Execution](durable-execution.md).
+  short grace — see [Durable Execution](durable-execution.md). "Inside" means
+  on the handler's context, however deep in the call stack: a helper awaiting
+  on that context returns the park sentinel too (`runnerq.IsYield` recognizes
+  it), and must return it unchanged, or wrapped with `%w`, to the handler,
+  which returns it. Don't await inside a
+  `RunStep`/`Run` function; await between steps.
 
 A failed activity surfaces as a `*WorkerError`:
 
