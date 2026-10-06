@@ -579,17 +579,6 @@ const (
 	dequeueBatchSQLAllTypes  = dequeueBatchSQLHead + dequeueBatchSQLTail
 	dequeueBatchSQLOneType   = dequeueBatchSQLHead + ` AND activity_type = $5` + dequeueBatchSQLTail
 	dequeueBatchSQLManyTypes = dequeueBatchSQLHead + ` AND activity_type = ANY($5)` + dequeueBatchSQLTail
-
-	// Must match claimEligibleSQL's text: the encoded claims replace it.
-	claimPlainJSON = `i.serialization <> 'json-v1'`
-)
-
-// EncodedStorage batch claims take the caller's readable encodings as the
-// last parameter.
-var (
-	dequeueBatchEncodedSQLAllTypes  = strings.Replace(dequeueBatchSQLAllTypes, claimPlainJSON, `i.serialization <> ALL($5::text[])`, 1)
-	dequeueBatchEncodedSQLOneType   = strings.Replace(dequeueBatchSQLOneType, claimPlainJSON, `i.serialization <> ALL($6::text[])`, 1)
-	dequeueBatchEncodedSQLManyTypes = strings.Replace(dequeueBatchSQLManyTypes, claimPlainJSON, `i.serialization <> ALL($6::text[])`, 1)
 )
 
 func scanClaim(row pgx.Row) (storage.DequeuedActivity, error) {
@@ -711,29 +700,10 @@ func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix strin
 	if limit <= 0 {
 		return nil, nil
 	}
-	return b.dequeueBatch(ctx, workerIDPrefix, limit, maxBlock, activityTypes, nil)
-}
-
-func (b *PostgresBackend) DequeueBatchEncoded(ctx context.Context, workerIDPrefix string, limit int, maxBlock time.Duration, activityTypes []string, serializations []string) ([]storage.DequeuedActivity, error) {
-	// An empty entry is plain JSON; no encodings claims nothing.
-	if len(serializations) == 0 {
-		return nil, nil
-	}
-	reads := make([]string, 0, len(serializations))
-	for _, s := range serializations {
-		reads = append(reads, storedSerialization(s))
-	}
-	return b.dequeueBatch(ctx, workerIDPrefix, limit, maxBlock, activityTypes, reads)
-}
-
-func (b *PostgresBackend) dequeueBatch(ctx context.Context, workerIDPrefix string, limit int, maxBlock time.Duration, activityTypes, reads []string) ([]storage.DequeuedActivity, error) {
-	if limit <= 0 {
-		return nil, nil
-	}
 	var claims []storage.DequeuedActivity
 	err := b.waitForClaim(ctx, maxBlock, func() (bool, error) {
 		var err error
-		claims, err = b.dequeueBatchOnce(ctx, workerIDPrefix, limit, activityTypes, reads)
+		claims, err = b.dequeueBatchOnce(ctx, workerIDPrefix, limit, activityTypes)
 		return len(claims) > 0, err
 	})
 	if err != nil {
@@ -742,8 +712,7 @@ func (b *PostgresBackend) dequeueBatch(ctx context.Context, workerIDPrefix strin
 	return claims, nil
 }
 
-// reads nil means plain JSON only.
-func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix string, limit int, activityTypes, reads []string) ([]storage.DequeuedActivity, error) {
+func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix string, limit int, activityTypes []string) ([]storage.DequeuedActivity, error) {
 	ctx, cancel, err := claimContext(ctx)
 	if err != nil {
 		return nil, err
@@ -751,19 +720,13 @@ func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix s
 	defer cancel()
 	var rows pgx.Rows
 	lease := b.defaultLeaseMS.Load()
-	switch {
-	case reads == nil && len(activityTypes) == 0:
+	switch len(activityTypes) {
+	case 0:
 		rows, err = b.pool.Query(ctx, dequeueBatchSQLAllTypes, workerIDPrefix, lease, b.queueName, limit)
-	case reads == nil && len(activityTypes) == 1:
+	case 1:
 		rows, err = b.pool.Query(ctx, dequeueBatchSQLOneType, workerIDPrefix, lease, b.queueName, limit, activityTypes[0])
-	case reads == nil:
-		rows, err = b.pool.Query(ctx, dequeueBatchSQLManyTypes, workerIDPrefix, lease, b.queueName, limit, activityTypes)
-	case len(activityTypes) == 0:
-		rows, err = b.pool.Query(ctx, dequeueBatchEncodedSQLAllTypes, workerIDPrefix, lease, b.queueName, limit, reads)
-	case len(activityTypes) == 1:
-		rows, err = b.pool.Query(ctx, dequeueBatchEncodedSQLOneType, workerIDPrefix, lease, b.queueName, limit, activityTypes[0], reads)
 	default:
-		rows, err = b.pool.Query(ctx, dequeueBatchEncodedSQLManyTypes, workerIDPrefix, lease, b.queueName, limit, activityTypes, reads)
+		rows, err = b.pool.Query(ctx, dequeueBatchSQLManyTypes, workerIDPrefix, lease, b.queueName, limit, activityTypes)
 	}
 	if err != nil {
 		return nil, databaseError(err, fmt.Sprintf("Failed to batch dequeue: %v", err))
@@ -802,10 +765,6 @@ func dueAt(a storage.QueuedActivity) time.Time {
 
 func (b *PostgresBackend) AckSuccess(ctx context.Context, activityID uuid.UUID, result json.RawMessage, workerID string) error {
 	return b.ackSuccess(ctx, activityID, result, "", workerID)
-}
-
-func (b *PostgresBackend) AckSuccessEncoded(ctx context.Context, activityID uuid.UUID, result json.RawMessage, serialization string, workerID string) error {
-	return b.ackSuccess(ctx, activityID, result, serialization, workerID)
 }
 
 func (b *PostgresBackend) ackSuccess(ctx context.Context, activityID uuid.UUID, result json.RawMessage, serialization string, workerID string) error {
@@ -1174,10 +1133,6 @@ func (b *PostgresBackend) Yield(ctx context.Context, activityID uuid.UUID, wakeA
 // retention) and, atomically, wakes the target if it is parked as 'waiting'.
 func (b *PostgresBackend) SignalActivity(ctx context.Context, activityID uuid.UUID, signalID uuid.UUID, name string, payload json.RawMessage) error {
 	return b.signalActivity(ctx, activityID, signalID, name, payload, "")
-}
-
-func (b *PostgresBackend) SignalActivityEncoded(ctx context.Context, activityID uuid.UUID, signalID uuid.UUID, name string, payload json.RawMessage, serialization string) error {
-	return b.signalActivity(ctx, activityID, signalID, name, payload, serialization)
 }
 
 func (b *PostgresBackend) signalActivity(ctx context.Context, activityID uuid.UUID, signalID uuid.UUID, name string, payload json.RawMessage, serialization string) error {
@@ -2018,5 +1973,3 @@ func (b *PostgresBackend) scanSnapshots(rows pgx.Rows) ([]storage.ActivitySnapsh
 	}
 	return snapshots, nil
 }
-
-var _ storage.EncodedStorage = (*PostgresBackend)(nil)

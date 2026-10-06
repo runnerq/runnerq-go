@@ -7,8 +7,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// OpenExisting opens a pre-provisioned backend without DDL. Managed services
-// can run WithConfig during provisioning/migration and use this on API boot.
+// OpenExisting opens a backend on a schema that is already current, without
+// DDL: for deployments that migrate separately (WithConfig, once) and start
+// many processes against the result.
 func OpenExisting(ctx context.Context, databaseURL, queueName string, leaseMS int64, poolSize int32) (*PostgresBackend, error) {
 	if err := validateQueueName(queueName); err != nil {
 		return nil, err

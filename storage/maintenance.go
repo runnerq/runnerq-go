@@ -1,8 +1,10 @@
 package storage
 
-// ManagedMaintenanceStorage marks services that run lease recovery and
-// retention themselves. Engine retention settings are then rejected rather
-// than silently ignored; configure retention on the service.
-type ManagedMaintenanceStorage interface {
-	MaintenanceManaged() bool
+// SelfMaintainingStorage is storage that recovers expired leases and applies
+// retention itself, such as a storage service that runs them for every
+// queue. When MaintainsItself reports true the engine runs neither, and
+// rejects its own retention settings rather than silently ignoring them:
+// configure retention on the storage.
+type SelfMaintainingStorage interface {
+	MaintainsItself() bool
 }

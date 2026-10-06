@@ -366,7 +366,7 @@ func TestSleepYieldsBeyondTimeoutBudget(t *testing.T) {
 }
 
 // A workflow's ctx.Run and ctx.Sleep checkpoints are recorded with their human
-// identity so the console can show step history. (Feature A.)
+// identity so step history can be listed. (Feature A.)
 func TestStepHistoryRecorded(t *testing.T) {
 	h := &funcHandler{fn: func(ctx ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
 		if _, err := ctx.Run("alpha", func() (json.RawMessage, error) {
@@ -420,8 +420,8 @@ func TestStepHistoryRecorded(t *testing.T) {
 	}
 }
 
-// A parked durable wait records WHY on the Yielded event (kind + step), so the
-// console can show "Sleeping…/Waiting for signal…" instead of bare "Waiting".
+// A parked durable wait records WHY on the Yielded event (kind + step), so it
+// can be shown as "Sleeping…/Waiting for signal…" instead of bare "Waiting".
 // (Feature B.)
 func TestYieldEventCarriesWaitReason(t *testing.T) {
 	h := &funcHandler{fn: func(ctx ActivityContext, _ json.RawMessage) (json.RawMessage, error) {

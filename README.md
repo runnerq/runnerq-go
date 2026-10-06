@@ -237,12 +237,12 @@ passes can replace Postgres without the engine noticing. See
 </details>
 
 <details>
-<summary><strong>A console in RunnerQ Cloud</strong></summary>
+<summary><strong>A console for your workers</strong></summary>
 
-Connect your workers with the `conductor` agent and see every activity, its
-steps, events and results in RunnerQ Cloud, read live from your own database
+The `conductor` agent connects your workers to a console that shows every
+activity, its steps, events and results, read live from your own database
 through the workers. Your data stays where it is. See
-[Observability](docs/observability.md).
+[Conductor agent](docs/conductor.md).
 
 </details>
 
@@ -295,7 +295,8 @@ Full reference in [`docs/`](docs/):
 - [Durable Execution](docs/durable-execution.md) — `Step`, `Run`, `Sleep`, signals, versioning
 - [Retries & Dead Letter](docs/retries-and-dead-letter.md)
 - [Configuration](docs/configuration.md) — tuning, scheduling, workload isolation, retention
-- [Observability](docs/observability.md) — RunnerQ Cloud, reading activities from code, metrics
+- [Observability](docs/observability.md) — reading activities from code, worker snapshots, metrics
+- [Conductor agent](docs/conductor.md) — connecting workers to a console
 - [Storage Backends](docs/storage-backends.md)
 
 ## Status

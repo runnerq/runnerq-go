@@ -49,6 +49,6 @@ executor.Activity[ChargeCard]().MaxRetries(2).Payload(p).Execute(ctx)
 don't need the callback. Note: activities dead-lettered by repeated **lease
 expiry** (a handler that keeps crashing the process) don't get an
 `OnDeadLetter` call — there's no live handler to invoke; watch the metrics and
-console for those. See [docs/retries-and-dead-letter.md](../../docs/retries-and-dead-letter.md).
+dead letters for those. See [docs/retries-and-dead-letter.md](../../docs/retries-and-dead-letter.md).
 
 Next: [11 — Retention](../11-retention/).

@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// CommandStorage applies RunnerQ Cloud commands to the backend's own queue.
+// CommandStorage applies operator commands to the backend's own queue.
 // Commands are idempotent by Command.ID: the backend keeps each applied
 // command's result for at least 24 hours and replays it for the same ID; the
 // same ID with a different Fingerprint is ErrConflict.

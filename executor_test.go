@@ -76,10 +76,12 @@ func TestEngineSnapshotAndObservers(t *testing.T) {
 	go func() { done <- e.Start(ctx) }()
 	receive(t, entered)
 
-	for _, o := range []*observer{&b.observer, extra} {
-		if srcs := o.sources(); len(srcs) != 1 || srcs[0] != executor.Source(e) {
-			t.Fatalf("observer told about %v", srcs)
-		}
+	if srcs := extra.sources(); len(srcs) != 1 || srcs[0] != executor.Source(e) {
+		t.Fatalf("observer told about %v", srcs)
+	}
+	// A backend that is an Observer is told only when observed like any other.
+	if srcs := b.observer.sources(); len(srcs) != 0 {
+		t.Fatalf("an unobserved backend was told about %v", srcs)
 	}
 	snap := e.Snapshot()
 	info := snap.Info
@@ -105,10 +107,8 @@ func TestEngineSnapshotAndObservers(t *testing.T) {
 	}
 	close(release)
 	receive(t, b.ack)
-	for _, o := range []*observer{&b.observer, extra} {
-		if got := receive(t, o.stopped); got != e.InstanceID() {
-			t.Fatalf("stopped %q", got)
-		}
+	if got := receive(t, extra.stopped); got != e.InstanceID() {
+		t.Fatalf("stopped %q", got)
 	}
 	if err := receive(t, done); err != nil {
 		t.Fatal(err)

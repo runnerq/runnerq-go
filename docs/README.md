@@ -11,7 +11,8 @@ are the deeper reference.
 - **[Durable Execution](durable-execution.md)** — the core: `Step`, `ctx.RunStep`, `ctx.Sleep`, `WaitForSignal`, how parents park and resume, and versioning across deploys.
 - **[Retries & Dead Letter](retries-and-dead-letter.md)** — error types, backoff, delivery semantics, lease recovery, the dead-letter queue.
 - **[Configuration](configuration.md)** — builder options, defaults, lease/pool tuning, scheduling, workload isolation, retention.
-- **[Observability](observability.md)** — connecting to RunnerQ Cloud, reading activities from code, metrics.
+- **[Observability](observability.md)** — reading activities from code, worker snapshots, metrics.
+- **[Conductor agent](conductor.md)** — connecting workers to a console.
 - **[Storage Backends](storage-backends.md)** — the Postgres backend, the schema, implementing your own.
 
 ## The one-paragraph mental model

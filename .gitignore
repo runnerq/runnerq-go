@@ -18,8 +18,6 @@ go.work.sum
 
 # Dependency directories (Go module vendor convention).
 vendor/
-# But the console's bundled JS deps are first-class repo content and have to ship.
-!observability/ui/vendor/
 
 # IDE
 .idea/
