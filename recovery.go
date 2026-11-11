@@ -15,7 +15,7 @@ const storageAttemptTimeout = 5 * time.Second
 // retryStorage retries fn with backoff until it succeeds or cancellation,
 // claim loss or a permanent error ends it. Each attempt gets its own deadline,
 // so one timed-out attempt does not end the loop.
-func retryStorage(ctx context.Context, operation string, metrics MetricsSink, renew func(context.Context) error, fn func(context.Context) error) error {
+func retryStorage(ctx context.Context, operation string, metrics LabeledMetricsSink, labels MetricLabels, renew func(context.Context) error, fn func(context.Context) error) error {
 	if metrics == nil {
 		metrics = NoopMetrics{}
 	}
@@ -50,7 +50,7 @@ func retryStorage(ctx context.Context, operation string, metrics MetricsSink, re
 				slog.Warn("Could not renew claim during storage recovery", "operation", operation, "error", rerr)
 			}
 		}
-		metrics.IncCounter("storage_retry", 1)
+		metrics.AddCounter(MetricStorageRetry, 1, labels)
 		slog.Warn("Retrying storage operation", "operation", operation, "pending_for", time.Since(started), "error", err)
 		wait := time.Duration(float64(delay) * (0.95 + rand.Float64()*0.1))
 		timer := time.NewTimer(wait)

@@ -313,6 +313,7 @@ type ActivityExecutor struct {
 	maxDepth uint16
 	lineage  *lineageScope // nil outside a handler
 	announce *announcer
+	tel      *telemetry // nil: no tracer
 }
 
 type lineageScope struct {
@@ -338,11 +339,11 @@ func (w *ActivityExecutor) handlerScope(ctx context.Context) *ActivityExecutor {
 	return scoped
 }
 
-func newActivityExecutor(queue activityQueue, maxDepth uint16, announce *announcer) *ActivityExecutor {
+func newActivityExecutor(queue activityQueue, maxDepth uint16, announce *announcer, tel *telemetry) *ActivityExecutor {
 	if maxDepth == 0 {
 		maxDepth = DefaultMaxActivityDepth
 	}
-	return &ActivityExecutor{queue: queue, maxDepth: maxDepth, announce: announce}
+	return &ActivityExecutor{queue: queue, maxDepth: maxDepth, announce: announce, tel: tel}
 }
 
 func (w *ActivityExecutor) scopedForChild(parent *activity) *ActivityExecutor {
@@ -359,6 +360,7 @@ func (w *ActivityExecutor) scopedForChild(parent *activity) *ActivityExecutor {
 		queue:    w.queue,
 		maxDepth: w.maxDepth,
 		announce: w.announce,
+		tel:      w.tel,
 		lineage: &lineageScope{
 			parentID:   parent.ID,
 			rootID:     rootID,
@@ -425,16 +427,25 @@ func (w *ActivityExecutor) executeActivity(ctx context.Context, activityType str
 	}
 
 	activityID := a.ID
+	tracer := w.tel.tracerOf()
+	ctx, end := startSpan(ctx, tracer, SpanEnqueue, "", func() []TraceAttribute {
+		return w.tel.activityAttrs(a)
+	})
+	a.Metadata = setTraceparent(ctx, tracer, a.Metadata)
 
 	if a.IdempotencyKey != nil {
 		existing, err := w.queue.EnqueueIdempotent(ctx, a)
 		if err != nil {
-			return nil, WorkerErrorFromStorage(err)
+			err = WorkerErrorFromStorage(err)
+			end(OutcomeError, err)
+			return nil, err
 		}
 		if existing == nil {
+			end(OutcomeEnqueued, nil)
 			w.announce.submitted(a)
 			return &ActivityFuture{queue: w.queue, activityID: activityID}, nil
 		}
+		end(OutcomeExisting, nil, TraceAttribute{AttrActivityID, existing.ExistingID.String()})
 		// Another parent reusing an existing child: the row keeps its original
 		// parent, and the link is recorded as an event (not for a same-parent
 		// retry).
@@ -453,8 +464,11 @@ func (w *ActivityExecutor) executeActivity(ctx context.Context, activityType str
 	}
 
 	if err := w.queue.Enqueue(ctx, a); err != nil {
-		return nil, WorkerErrorFromStorage(err)
+		err := WorkerErrorFromStorage(err)
+		end(OutcomeError, err)
+		return nil, err
 	}
+	end(OutcomeEnqueued, nil)
 	w.announce.submitted(a)
 
 	return &ActivityFuture{queue: w.queue, activityID: activityID}, nil

@@ -69,6 +69,10 @@ type WorkerConfig struct {
 	// When it runs out, Start returns with activities still in flight.
 	ShutdownGraceSeconds *uint64 `json:"shutdown_grace_seconds,omitempty"`
 
+	// GaugeInterval turns on the gauges, sampled about this often; 0 (the
+	// default) leaves them off. See WorkerEngineBuilder.GaugeInterval.
+	GaugeInterval time.Duration `json:"gauge_interval,omitempty"`
+
 	// Labels are free-form tags for this worker (region, deploy version),
 	// carried in its executor snapshots.
 	Labels map[string]string `json:"labels,omitempty"`

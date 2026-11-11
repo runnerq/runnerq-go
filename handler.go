@@ -40,6 +40,8 @@ type ActivityContext struct {
 	// nil in a hand-built context (handler unit tests), where Run just calls
 	// fn and Sleep waits in-process.
 	queue activityQueue
+	// tracer is the engine's; nil starts no spans.
+	tracer Tracer
 }
 
 // checkpointID is the stable id of a named checkpoint: every process derives
@@ -62,11 +64,16 @@ func (c ActivityContext) checkpointID(kind, name string) uuid.UUID {
 //
 // Step names must be stable across retries and unique within the handler.
 func (c ActivityContext) Run(name string, fn func() (json.RawMessage, error)) (json.RawMessage, error) {
+	return c.run(name, func(context.Context) (json.RawMessage, error) { return fn() })
+}
+
+// run is Run with fn given the step span's context.
+func (c ActivityContext) run(name string, fn func(context.Context) (json.RawMessage, error)) (json.RawMessage, error) {
 	if name == "" {
 		return nil, NewNonRetryError("Run requires a non-empty step name")
 	}
 	if c.queue == nil {
-		return fn()
+		return fn(c.context())
 	}
 	checkID := c.checkpointID("run", name)
 
@@ -83,7 +90,15 @@ func (c ActivityContext) Run(name string, fn func() (json.RawMessage, error)) (j
 		return nil, NewNonRetryError(failure.Error)
 	}
 
-	out, fnErr := fn()
+	stepCtx, end := c.span(SpanStep, func() []TraceAttribute {
+		return []TraceAttribute{{AttrActivityID, c.ActivityID.String()}, {AttrStepName, name}}
+	})
+	out, fnErr := fn(stepCtx)
+	if fnErr != nil {
+		end(OutcomeError, fnErr)
+	} else {
+		end(OutcomeOk, nil)
+	}
 	if fnErr != nil {
 		if !retryableError(fnErr) {
 			// Checkpoint a permanent failure so a retry of the handler (for
@@ -120,11 +135,7 @@ type Step[R any] func(ctx context.Context) (R, error)
 // permanent step failure because the side effect has already happened.
 func (c ActivityContext) RunStep[R any](name string, fn Step[R]) (R, error) {
 	var zero R
-	raw, err := c.Run(name, func() (json.RawMessage, error) {
-		parent := c.Ctx
-		if parent == nil {
-			parent = context.Background()
-		}
+	raw, err := c.run(name, func(parent context.Context) (json.RawMessage, error) {
 		stepCtx, cancel := context.WithCancel(parent)
 		defer cancel()
 		out, err := fn(stepCtx)
@@ -180,11 +191,27 @@ func (y *yieldPark) Error() string {
 // a Sleep that returns nil.
 //
 // Step names must be stable across retries and unique within the handler.
-func (c ActivityContext) Sleep(name string, d time.Duration) error {
+func (c ActivityContext) Sleep(name string, d time.Duration) (err error) {
 	if name == "" {
 		return NewNonRetryError("Sleep requires a non-empty step name")
 	}
+	var wakeAt time.Time
+	_, end := c.span(SpanSleep, func() []TraceAttribute {
+		return []TraceAttribute{{AttrActivityID, c.ActivityID.String()}, {AttrStepName, name}}
+	})
+	defer func() {
+		wake := TraceAttribute{AttrWakeAt, wakeAt.UTC().Format(time.RFC3339Nano)}
+		switch {
+		case err == nil:
+			end(OutcomeElapsed, nil, wake)
+		case IsYield(err):
+			end(OutcomeParked, nil, wake)
+		default:
+			end(OutcomeError, err)
+		}
+	}()
 	if c.queue == nil {
+		wakeAt = time.Now().Add(d)
 		select {
 		case <-time.After(d):
 			return nil
@@ -194,7 +221,6 @@ func (c ActivityContext) Sleep(name string, d time.Duration) error {
 	}
 	checkID := c.checkpointID("sleep", name)
 
-	var wakeAt time.Time
 	if stored, err := c.queue.GetResult(c.Ctx, checkID); err != nil {
 		return err
 	} else if stored != nil {
@@ -253,7 +279,22 @@ const signalParkHorizon = 100 * 365 * 24 * time.Hour
 // Like Sleep, a wait that doesn't fit the timeout YIELDS: propagate the
 // sentinel error unchanged. Signal names must be stable across retries and
 // unique within the handler.
-func (c ActivityContext) WaitForSignal(name string, timeout time.Duration) (json.RawMessage, error) {
+func (c ActivityContext) WaitForSignal(name string, timeout time.Duration) (payload json.RawMessage, err error) {
+	_, end := c.span(SpanSignalWait, func() []TraceAttribute {
+		return []TraceAttribute{{AttrActivityID, c.ActivityID.String()}, {AttrSignalName, name}}
+	})
+	defer func() {
+		switch {
+		case err == nil:
+			end(OutcomeReceived, nil)
+		case IsYield(err):
+			end(OutcomeParked, nil)
+		case IsSignalTimeout(err):
+			end(OutcomeTimeout, err)
+		default:
+			end(OutcomeError, err)
+		}
+	}()
 	if name == "" {
 		return nil, NewNonRetryError("WaitForSignal requires a non-empty signal name")
 	}
@@ -335,6 +376,19 @@ func (c ActivityContext) WaitForSignal(name string, timeout time.Duration) (json
 		}
 		return stored.Data, nil
 	}
+}
+
+// context is Ctx, or Background in a hand-built context without one.
+func (c ActivityContext) context() context.Context {
+	if c.Ctx == nil {
+		return context.Background()
+	}
+	return c.Ctx
+}
+
+// span starts a span under the attempt's when the engine has a tracer.
+func (c ActivityContext) span(name string, attrs func() []TraceAttribute) (context.Context, EndSpan) {
+	return startSpan(c.context(), c.tracer, name, "", attrs)
 }
 
 func (c ActivityContext) waitForCheckpoint(id uuid.UUID, wake time.Time) (*activityResult, error) {

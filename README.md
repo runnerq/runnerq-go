@@ -301,7 +301,7 @@ Full reference in [`docs/`](docs/):
 - [Durable Execution](docs/durable-execution.md) — `Step`, `Run`, `Sleep`, signals, versioning
 - [Retries & Dead Letter](docs/retries-and-dead-letter.md)
 - [Configuration](docs/configuration.md) — tuning, scheduling, workload isolation, retention
-- [Observability](docs/observability.md) — reading activities from code, worker snapshots, metrics
+- [Observability](docs/observability.md) — reading activities from code, worker snapshots, labelled metrics and gauges, tracing (OpenTelemetry in `otel/`)
 - [Conductor agent](docs/conductor.md) — connecting workers to a console
 - [Storage Backends](docs/storage-backends.md)
 
