@@ -232,7 +232,7 @@ func (b *PostgresBackend) applyCommandTx(ctx context.Context, cmd storage.Comman
 			VALUES ($1, $2, $3, $4, $5)`, b.queueName, cmd.ID, cmd.Fingerprint, string(cmd.Kind), raw); err != nil {
 			return nil, post, databaseError(err, "failed to record command")
 		}
-		if rand.IntN(64) == 0 {
+		if rand.IntN(64) == 0 { // #nosec G404 -- samples when to prune, not a secret
 			if _, err := tx.Exec(ctx, `DELETE FROM runnerq_commands WHERE ctid IN (
 				SELECT ctid FROM runnerq_commands WHERE created_at < $1 LIMIT 1000)`, now.Add(-commandLedgerKeep)); err != nil {
 				return nil, post, databaseError(err, "failed to prune command ledger")
