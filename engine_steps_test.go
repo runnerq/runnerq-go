@@ -494,7 +494,7 @@ func TestStepChildCarriesStepNameInKey(t *testing.T) {
 	}
 }
 
-// ctx.RunStep: the typed result is encoded into the checkpoint and decoded
+// RunStep: the typed result is encoded into the checkpoint and decoded
 // back on replay — fn runs once, the retried attempt gets the struct.
 func TestRunStepTypedResultSurvivesRetry(t *testing.T) {
 	type receipt struct {
@@ -505,7 +505,7 @@ func TestRunStepTypedResultSurvivesRetry(t *testing.T) {
 	var sawCtx atomic.Bool
 
 	h := &funcHandler{fn: func(ctx ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
-		r, err := ctx.RunStep("charge", func(c context.Context) (receipt, error) {
+		r, err := RunStep(ctx, "charge", func(c context.Context) (receipt, error) {
 			fnRuns.Add(1)
 			sawCtx.Store(c != nil && c.Err() == nil)
 			return receipt{ChargeID: "ch_1", Cents: 4200}, nil
@@ -541,19 +541,19 @@ func TestRunStepTypedResultSurvivesRetry(t *testing.T) {
 	}
 }
 
-// ctx.RunStep: a stored result that no longer decodes into R (the type
+// RunStep: a stored result that no longer decodes into R (the type
 // changed between deploys) is a permanent error — retrying can't fix it.
 func TestRunStepDecodeMismatchIsNonRetryable(t *testing.T) {
 	h := &funcHandler{fn: func(ctx ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
 		if ctx.RetryCount == 0 {
-			if _, err := ctx.RunStep("shape", func(context.Context) (map[string]string, error) {
+			if _, err := RunStep(ctx, "shape", func(context.Context) (map[string]string, error) {
 				return map[string]string{"v": "1"}, nil
 			}); err != nil {
 				return nil, err
 			}
 			return nil, NewRetryError("forced crash; the next attempt reads with a different R")
 		}
-		_, err := ctx.RunStep("shape", func(context.Context) (int, error) { return 0, nil })
+		_, err := RunStep(ctx, "shape", func(context.Context) (int, error) { return 0, nil })
 		if err == nil {
 			return nil, NewNonRetryError("decoding an object into int succeeded")
 		}
@@ -577,13 +577,13 @@ func TestRunStepDecodeMismatchIsNonRetryable(t *testing.T) {
 	}
 }
 
-// ctx.RunStep on a hand-built context (no checkpoint storage) still runs fn
+// RunStep on a hand-built context (no checkpoint storage) still runs fn
 // with a live context, round-trips the value, and turns an unencodable
 // result into a permanent error.
 func TestRunStepWithoutQueue(t *testing.T) {
 	c := ActivityContext{ActivityID: uuid.New()}
 
-	n, err := c.RunStep("n", func(sc context.Context) (int, error) {
+	n, err := RunStep(c, "n", func(sc context.Context) (int, error) {
 		if sc == nil {
 			t.Fatal("nil step context")
 		}
@@ -593,18 +593,18 @@ func TestRunStepWithoutQueue(t *testing.T) {
 		t.Fatalf("RunStep = %d, %v; want 7", n, err)
 	}
 
-	raw, err := c.RunStep("raw", func(context.Context) (json.RawMessage, error) {
+	raw, err := RunStep(c, "raw", func(context.Context) (json.RawMessage, error) {
 		return json.RawMessage(`{"k":[1,2]}`), nil
 	})
 	if err != nil || string(raw) != `{"k":[1,2]}` {
 		t.Fatalf("RawMessage passthrough = %s, %v", raw, err)
 	}
 
-	_, err = c.RunStep("bad", func(context.Context) (chan int, error) { return make(chan int), nil })
+	_, err = RunStep(c, "bad", func(context.Context) (chan int, error) { return make(chan int), nil })
 	if re, ok := err.(RetryableError); !ok || re.IsRetryable() {
 		t.Fatalf("unencodable result err = %v, want non-retryable", err)
 	}
-	if _, err := c.RunStep("", func(context.Context) (int, error) { return 1, nil }); err == nil {
+	if _, err := RunStep(c, "", func(context.Context) (int, error) { return 1, nil }); err == nil {
 		t.Fatal("empty step name accepted")
 	}
 }

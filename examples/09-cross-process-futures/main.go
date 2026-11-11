@@ -69,8 +69,7 @@ func main() {
 
 	// POST /jobs — enqueue and return the activity ID. The caller polls with it.
 	mux.HandleFunc("POST /jobs", func(w http.ResponseWriter, r *http.Request) {
-		fut, err := engine.GetActivityExecutor().
-			Activity[ResizeImage]().
+		fut, err := runnerq.Activity[ResizeImage](engine.GetActivityExecutor()).
 			Payload(json.RawMessage(`{"src":"photo.jpg"}`)).
 			Execute(r.Context())
 		if err != nil {

@@ -30,8 +30,7 @@ delivering webhooks: first event ×3, second event ×1
 ## The key idea
 
 ```go
-engine.GetActivityExecutor().
-    Activity[ProcessEvent]().
+runnerq.Activity[ProcessEvent](engine.GetActivityExecutor()).
     IdempotencyKeyOption(eventID, runnerq.ReturnExisting).   // dedup on the event ID
     Payload(payload).
     Execute(ctx)

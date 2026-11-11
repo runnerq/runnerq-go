@@ -89,8 +89,7 @@ func main() {
 			return
 		}
 		payload, _ := json.Marshal(map[string]string{"event_id": eventID})
-		_, err := engine.GetActivityExecutor().
-			Activity[ProcessEvent]().
+		_, err := runnerq.Activity[ProcessEvent](engine.GetActivityExecutor()).
 			IdempotencyKeyOption(eventID, runnerq.ReturnExisting).
 			Payload(payload).
 			Execute(r.Context())

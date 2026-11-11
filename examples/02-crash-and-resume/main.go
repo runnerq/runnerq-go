@@ -37,7 +37,7 @@ type FulfillOrder struct {
 
 func (h *FulfillOrder) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) (json.RawMessage, error) {
 	// Step 1 — reserve inventory.
-	if _, err := ctx.RunStep("reserve-inventory", func(context.Context) (bool, error) {
+	if _, err := runnerq.RunStep(ctx, "reserve-inventory", func(context.Context) (bool, error) {
 		fmt.Println("  ▶ EXECUTING reserve-inventory   (real side effect)")
 		return true, nil
 	}); err != nil {
@@ -46,7 +46,7 @@ func (h *FulfillOrder) Handle(ctx runnerq.ActivityContext, payload json.RawMessa
 	fmt.Println("  ✓ reserve-inventory")
 
 	// Step 2 — charge the card. This is the side effect we must never repeat.
-	if _, err := ctx.RunStep("charge-card", func(context.Context) (string, error) {
+	if _, err := runnerq.RunStep(ctx, "charge-card", func(context.Context) (string, error) {
 		fmt.Println("  ▶ EXECUTING charge-card         (real side effect — charges $$$)")
 		return "ch_777", nil // the charge ID, checkpointed
 	}); err != nil {
@@ -62,7 +62,7 @@ func (h *FulfillOrder) Handle(ctx runnerq.ActivityContext, payload json.RawMessa
 	time.Sleep(6 * time.Second)
 
 	// Step 3 — ship.
-	if _, err := ctx.RunStep("ship-order", func(context.Context) (string, error) {
+	if _, err := runnerq.RunStep(ctx, "ship-order", func(context.Context) (string, error) {
 		fmt.Println("  ▶ EXECUTING ship-order          (real side effect)")
 		return "1Z999", nil // the tracking number, checkpointed
 	}); err != nil {
@@ -110,8 +110,7 @@ func main() {
 
 	// The fixed idempotency key is what makes re-running reattach to the same
 	// workflow rather than starting a new one.
-	future, err := engine.GetActivityExecutor().
-		Activity[FulfillOrder]().
+	future, err := runnerq.Activity[FulfillOrder](engine.GetActivityExecutor()).
 		IdempotencyKeyOption(orderID, runnerq.ReturnExisting).
 		Timeout(8 * time.Second).
 		Payload(json.RawMessage(`{"order_id":"` + orderID + `"}`)).

@@ -6,7 +6,7 @@
 go get github.com/runnerq/runnerq-go
 ```
 
-Requires Go 1.27+ and a PostgreSQL database (12+).
+Requires Go 1.25+ and a PostgreSQL database (12+).
 
 ## Connect to Postgres
 
@@ -64,8 +64,7 @@ go engine.Start(ctx)
 ## Enqueue and await
 
 ```go
-future, err := engine.GetActivityExecutor().
-    Activity[Greeting]().
+future, err := runnerq.Activity[Greeting](engine.GetActivityExecutor()).
     Payload(json.RawMessage(`"world"`)).
     Execute(ctx)
 if err != nil {
@@ -87,17 +86,16 @@ in scope. The two are interchangeable, line for line:
 ```go
 // Typed (recommended)
 engine.RegisterActivity(&Greeting{})
-engine.GetActivityExecutor().Activity[Greeting]().Payload(p).Execute(ctx)
+runnerq.Activity[Greeting](engine.GetActivityExecutor()).Payload(p).Execute(ctx)
 
 // Named
 engine.RegisterActivityWithName("greeting", &Greeting{})
 engine.GetActivityExecutor().ActivityNamed("greeting").Payload(p).Execute(ctx)
 ```
 
-The named form is also the shape of the v0.5 API. RunnerQ v0.6+ requires
-Go 1.27 for the typed methods; if you cannot move to 1.27 yet, stay on v0.5,
-where the named form is the only one and your code carries over unchanged
-apart from the method names. See
+The named form is also the shape of the v0.5 API, so v0.5 code carries over
+unchanged apart from the method names. On Go 1.27 and later the typed helpers
+are also methods: `exec.Activity[Greeting]()` and `ctx.RunStep(name, fn)`. See
 [Naming activities](workflows.md#naming-activities) for the full picture.
 
 ## Shutdown

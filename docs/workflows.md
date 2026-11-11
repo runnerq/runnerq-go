@@ -35,7 +35,7 @@ Both are first-class and can be mixed in one program.
 | | Typed (recommended) | Named |
 |---|---|---|
 | Register | `engine.RegisterActivity(&ResizeImage{})` | `engine.RegisterActivityWithName("resize_image", &ResizeImage{})` |
-| Spawn | `exec.Activity[ResizeImage]()` | `exec.ActivityNamed("resize_image")` |
+| Spawn | `runnerq.Activity[ResizeImage](exec)` | `exec.ActivityNamed("resize_image")` |
 | Type string | derived: `"ResizeImage"` | whatever you pass |
 
 **Typed** derives the type from the handler's Go type name, so registration
@@ -47,13 +47,12 @@ pin a type that must outlive a refactor, serve several types from one handler,
 or enqueue from a producer that has no Go type in scope. It is also the shape
 of the v0.5 API, so code written against v0.5 keeps the same structure
 (`RegisterActivity(name, h)` there is `RegisterActivityWithName` here, and
-`Activity(name)` is `ActivityNamed`). RunnerQ v0.6+ requires Go 1.27; on an
-older toolchain stay on v0.5, where the named form is the only one.
+`Activity(name)` is `ActivityNamed`).
 
 ```go
 // Typed: the handler type is the name.
 engine.RegisterActivity(&ResizeImage{})
-exec.Activity[ResizeImage]().Payload(p).Execute(ctx)
+runnerq.Activity[ResizeImage](exec).Payload(p).Execute(ctx)
 
 // Named: you choose the string.
 engine.RegisterActivityWithName("resize_image", &ResizeImage{})
@@ -74,9 +73,9 @@ Prefer a pinned name when:
   [workload isolation](../examples/12-workload-isolation).
 - **Producers are outside this Go module** and enqueue by string.
 
-`Activity[T]` and `NameOf` know nothing about registration: a handler pinned
+`runnerq.Activity[T]` and `NameOf` know nothing about registration: a handler pinned
 under `"resize_image"` is spawned with `ActivityNamed("resize_image")`, not
-`Activity[ResizeImage]()`.
+`runnerq.Activity[ResizeImage](exec)`.
 
 ### Migrating from explicit names (v0.4 and earlier)
 

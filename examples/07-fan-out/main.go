@@ -39,8 +39,7 @@ func (h *ProcessDocument) Handle(ctx runnerq.ActivityContext, payload json.RawMe
 	futures := make([]*runnerq.ActivityFuture, len(pages))
 	for i, page := range pages {
 		p, _ := json.Marshal(map[string]any{"page": page, "index": i})
-		fut, err := ctx.ActivityExecutor.
-			Activity[ProcessPage]().
+		fut, err := runnerq.Activity[ProcessPage](ctx.ActivityExecutor).
 			Step(fmt.Sprintf("page-%d", i)).
 			Payload(p).
 			Execute(ctx.Ctx)
@@ -118,8 +117,7 @@ func main() {
 		backend.Close()
 	}()
 
-	future, err := engine.GetActivityExecutor().
-		Activity[ProcessDocument]().
+	future, err := runnerq.Activity[ProcessDocument](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{"doc":"report.pdf"}`)).
 		Execute(ctx)
 	if err != nil {

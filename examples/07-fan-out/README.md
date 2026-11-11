@@ -40,8 +40,7 @@ are done. Each replay fast-forwards through finished children.)
 ```go
 var futures []*runnerq.ActivityFuture
 for i, page := range pages {
-    fut, _ := ctx.ActivityExecutor.
-        Activity[ProcessPage]().
+    fut, _ := runnerq.Activity[ProcessPage](ctx.ActivityExecutor).
         Step(fmt.Sprintf("page-%d", i)).   // stable name → replay-safe
         Payload(...).Execute(ctx.Ctx)
     futures = append(futures, fut)
