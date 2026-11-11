@@ -26,6 +26,42 @@ var commandTests = []conformanceTest{
 	{"FilterTargetsAreBounded", testFilterTarget},
 	{"LedgerReplaysAndRejectsReuse", testLedger},
 	{"CancelledTreesAreRetained", testCancelledRetention},
+	{"CancelNotifiesAnotherProcess", testCancelNotifies},
+}
+
+// testCancelNotifies: a backend that is a storage.ResultNotifier hints a
+// running activity's cancellation to another process, which the engine uses
+// to stop the handler promptly.
+func testCancelNotifies(t *testing.T, h Harness) {
+	s := newSuite(t, h)
+	s.commands()
+	holder, ok := s.another().(storage.ResultNotifier)
+	if !ok {
+		t.Skip("backend does not implement storage.ResultNotifier")
+	}
+	running := s.enqueueClaimed("exec:w1", activity())
+	hint, stop := holder.NotifyResult(running.ID)
+	defer stop()
+	// A hint is lossy while the listener connects; repeat the wake until it
+	// lands or the bound passes.
+	deadline := time.After(wait)
+	cancelled := false
+	for {
+		if !cancelled {
+			wantApplied(t, s.apply(onIDs(storage.CommandCancel, running.ID)), running.ID, storage.RecordStatusCancelled)
+			cancelled = true
+		}
+		select {
+		case <-hint:
+			return
+		case <-time.After(500 * time.Millisecond):
+			// Each cancel stores the activity's result anew.
+			s.apply(onIDs(storage.CommandRetry, running.ID))
+			cancelled = false
+		case <-deadline:
+			t.Fatal("no result hint for the cancelled activity")
+		}
+	}
 }
 
 func (s *suite) commands() storage.CommandStorage {

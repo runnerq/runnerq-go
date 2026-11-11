@@ -132,7 +132,14 @@ func translateResult(result *activityResult) (json.RawMessage, error) {
 		return result.Data, nil
 	}
 	resultJSON, _ := json.Marshal(result.Data)
-	return nil, &WorkerError{Kind: ErrCustom, Message: string(resultJSON)}
+	kind := ErrCustom
+	var failure struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(result.Data, &failure) == nil && failure.Type == "cancelled" {
+		kind = ErrActivityCancelled
+	}
+	return nil, &WorkerError{Kind: kind, Message: string(resultJSON)}
 }
 
 // ActivityBuilder configures one spawn; Execute enqueues it.

@@ -252,6 +252,22 @@ through the workers. Your data stays where it is. See
 
 </details>
 
+<details>
+<summary><strong>Manage work from code</strong></summary>
+
+`runnerq.NewClient(backend)` needs no engine. It submits, signals and awaits
+activities, lists them, and cancels, retries, reschedules, runs now,
+reprioritises or deletes them. A cancel stops a running handler on whichever
+worker holds it. Every command is idempotent by command id.
+
+```go
+client := runnerq.NewClient(backend)
+res, err := client.Cancel(ctx, runnerq.IDs(id), runnerq.WithReason("customer asked"))
+res, err = client.Retry(ctx, runnerq.IDs(failedID), runnerq.ResetAttempts())
+```
+
+</details>
+
 ## Examples
 
 Runnable, realistic, copy-pasteable — each in [`examples/`](examples/) with its
@@ -301,6 +317,7 @@ Full reference in [`docs/`](docs/):
 - [Durable Execution](docs/durable-execution.md) — `Step`, `Run`, `Sleep`, signals, versioning
 - [Retries & Dead Letter](docs/retries-and-dead-letter.md)
 - [Configuration](docs/configuration.md) — tuning, scheduling, workload isolation, retention
+- [Managing work](docs/managing-work.md) — the client: cancel, retry, reschedule, run now, list
 - [Observability](docs/observability.md) — reading activities from code, worker snapshots, metrics
 - [Conductor agent](docs/conductor.md) — connecting workers to a console
 - [Storage Backends](docs/storage-backends.md)
