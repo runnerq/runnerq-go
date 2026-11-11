@@ -214,6 +214,9 @@ func (d *driver) command(ctx context.Context, a args) (any, error) {
 	if a.Priority != nil {
 		cmd.Priority = storage.ActivityPriority(*a.Priority)
 	}
+	if cmd.Fingerprint == "" {
+		cmd.Fingerprint = storage.CommandFingerprint(cmd)
+	}
 	res, err := d.b.ApplyCommand(ctx, cmd)
 	if err != nil {
 		return nil, err

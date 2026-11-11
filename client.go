@@ -2,8 +2,6 @@ package runnerq
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -393,7 +391,7 @@ func (c *Client) apply(ctx context.Context, cmd storage.Command, target Target, 
 	cmd.DryRun, cmd.Reason = cfg.dryRun, cfg.reason
 	cmd.CascadeChildren = cmd.Kind == storage.CommandCancel && !cfg.noCasc
 	cmd.ResetAttempts = cfg.reset
-	cmd.Fingerprint = fingerprint(cmd)
+	cmd.Fingerprint = storage.CommandFingerprint(cmd)
 
 	res, err := cs.ApplyCommand(ctx, cmd)
 	if err != nil {
@@ -423,28 +421,4 @@ func (c *Client) apply(ctx context.Context, cmd storage.Command, target Target, 
 		}
 	}
 	return out, nil
-}
-
-// fingerprint identifies a command's input, so a reused command id with
-// different input is caught.
-func fingerprint(cmd storage.Command) string {
-	in := struct {
-		Kind          storage.CommandKind  `json:"kind"`
-		IDs           []uuid.UUID          `json:"ids,omitempty"`
-		Filter        *storage.QueryFilter `json:"filter,omitempty"`
-		Max           int                  `json:"max,omitempty"`
-		DryRun        bool                 `json:"dry_run,omitempty"`
-		Reason        string               `json:"reason,omitempty"`
-		Cascade       bool                 `json:"cascade,omitempty"`
-		ResetAttempts bool                 `json:"reset_attempts,omitempty"`
-		At            string               `json:"at,omitempty"`
-		Priority      int                  `json:"priority,omitempty"`
-	}{cmd.Kind, cmd.Target.IDs, cmd.Target.Filter, cmd.Target.Max, cmd.DryRun, cmd.Reason,
-		cmd.CascadeChildren, cmd.ResetAttempts, "", int(cmd.Priority)}
-	if !cmd.At.IsZero() {
-		in.At = cmd.At.UTC().Format(time.RFC3339Nano)
-	}
-	raw, _ := json.Marshal(in)
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
 }

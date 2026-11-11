@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -79,6 +81,35 @@ func TestSpecRetryDelay(t *testing.T) {
 	for _, c := range spectest.Load[in, int64](t, "vectors/retry_delay.json") {
 		if got := RetryDelaySeconds(c.Input.RetryCount, c.Input.RetryDelay, c.Input.MaxRetryDelay); got != c.Output {
 			t.Errorf("%s: got %d, want %d", c.Name, got, c.Output)
+		}
+	}
+}
+
+func TestSpecCommandFingerprint(t *testing.T) {
+	type in struct {
+		Kind          string          `json:"kind"`
+		IDs           []uuid.UUID     `json:"ids"`
+		Filter        *QueryFilter    `json:"filter"`
+		Max           int             `json:"max"`
+		DryRun        bool            `json:"dry_run"`
+		Cascade       bool            `json:"cascade"`
+		ResetAttempts bool            `json:"reset_attempts"`
+		Reason        string          `json:"reason"`
+		Name          string          `json:"name"`
+		At            time.Time       `json:"at"`
+		Priority      int             `json:"priority"`
+		Payload       json.RawMessage `json:"payload"`
+	}
+	type out struct {
+		Canonical   string `json:"canonical"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	for _, c := range spectest.Load[in, out](t, "vectors/command_fingerprint.json") {
+		cmd := Command{Kind: CommandKind(c.Input.Kind), Target: CommandTarget{IDs: c.Input.IDs, Filter: c.Input.Filter, Max: c.Input.Max},
+			DryRun: c.Input.DryRun, CascadeChildren: c.Input.Cascade, ResetAttempts: c.Input.ResetAttempts, Reason: c.Input.Reason,
+			SignalName: c.Input.Name, At: c.Input.At, Priority: c.Input.Priority, SignalPayload: c.Input.Payload}
+		if got := CommandFingerprint(cmd); got != c.Output.Fingerprint {
+			t.Errorf("%s: got %s, want %s", c.Name, got, c.Output.Fingerprint)
 		}
 	}
 }
