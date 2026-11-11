@@ -1,114 +1,99 @@
 # Releasing
 
-runnerq-go follows [semver](https://semver.org). Release notes are
-auto-drafted by [release-drafter](https://github.com/release-drafter/release-drafter)
-from merged PR titles + labels. Tagging is the only manual step.
+runnerq-go follows [semver](https://semver.org) as described under
+[Versioning policy](#versioning-policy). Each release has two kinds of notes:
 
-## How notes get drafted
+- [`CHANGELOG.md`](CHANGELOG.md): the curated summary, written as PRs land,
+  under `## Unreleased`.
+- The GitHub release: that changelog section followed by the list of merged
+  PRs GitHub generates from their labels
+  ([`.github/release.yml`](.github/release.yml)).
 
-Every PR merge to `main` runs
-[`.github/workflows/release-drafter.yml`](.github/workflows/release-drafter.yml),
-which:
+## While developing
 
-1. Looks at every PR merged since the last tag.
-2. Categorizes each by label (see
-   [`.github/release-drafter.yml`](.github/release-drafter.yml)).
-3. Resolves the next semver bump (`major` / `minor` / `patch`) from the
-   highest-impact label across that batch.
-4. Updates an unpublished draft release named `vNEXT` with the formatted
-   notes.
+- A PR that changes behaviour, the public API, the schema or the supported
+  Go or Postgres versions adds a line to `## Unreleased` in `CHANGELOG.md`.
+  Breaking changes say what breaks and how to move.
+- Label every PR before merging, so the generated notes put it in the right
+  section:
 
-Labels are applied automatically by an autolabeler that maps Conventional
-Commit prefixes in the PR title to labels:
+  | Label | Section | Bump it implies |
+  | --- | --- | --- |
+  | `breaking` | Breaking changes | minor before 1.0, major after |
+  | `feature` | Features | minor |
+  | `fix` | Bug fixes | patch |
+  | `perf` | Performance | patch |
+  | `security` | Security | patch |
+  | `docs` | Documentation | none on its own |
+  | `chore`, `refactor`, `ci`, `build`, `deps` | Maintenance | none on its own |
+  | `skip-release-notes` | left out | none |
 
-| PR title prefix | Auto-label | Bumps |
-|---|---|---|
-| `feat:` | `feature` | minor |
-| `fix:` | `fix` | patch |
-| `perf:` | `perf` | patch |
-| `docs:` | `docs` | patch |
-| `chore:` | `chore` | patch |
-| `refactor:` | `refactor` | patch |
-| `security:` | `security` | patch |
-| `build:` | `build` | patch |
-| `ci:` | `ci` | patch |
-| `deps:` / `chore(deps):` | `deps` | patch |
-| Anything ending `!:` (e.g. `feat!:`) | `breaking` | **major** |
-| Body contains `BREAKING CHANGE` | `breaking` | **major** |
-
-Override the auto-applied label by setting one manually on the PR — the
-autolabeler doesn't strip existing labels.
+  Unlabelled PRs land under "Other changes".
 
 ## Cutting a release
 
-Once `main` is in a state you want to release:
+1. Pick the version from the labels merged since the last tag and the
+   policy below.
+2. In a PR, rename `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z` (and
+   start a new empty `## Unreleased` above it). If the conductor module is
+   released too, point `conductor/go.mod`'s
+   `require github.com/runnerq/runnerq-go` at `vX.Y.Z` and its
+   `runnerq-spec` require at a tagged spec release.
+3. After it merges, tag `main`:
 
-```bash
-git checkout main
-git pull
-git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin vX.Y.Z
-```
+   ```bash
+   git checkout main && git pull
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git tag -a conductor/vX.Y.Z -m "conductor/vX.Y.Z"   # same commit, when released
+   git push origin vX.Y.Z conductor/vX.Y.Z
+   ```
 
 The `Release` workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))
-fires on the tag push, finalizes the draft (matching the tag and name), and
-publishes it.
+runs on the `vX.Y.Z` tag: it takes the tag's section from `CHANGELOG.md`,
+appends the generated PR list, and publishes the GitHub release. It fails if
+the changelog has no section for the tag. A tag with a pre-release suffix
+(`vX.Y.Z-rc.N`) is published as a pre-release.
 
-That's it — no binary artifacts to build, no `go release` step needed. Go's
-[module proxy](https://proxy.golang.org/) auto-discovers the new tag the
-moment any user runs `go get github.com/runnerq/runnerq-go@vX.Y.Z`.
+There is nothing to build or upload: the Go module proxy picks up the tag
+the first time someone runs `go get github.com/runnerq/runnerq-go@vX.Y.Z`.
 
 ## Versioning policy
 
-- **v0.x**: pre-1.0. API may change between minors. Pseudo-versions
-  (`v0.0.0-<date>-<sha>`) are how downstream apps pin to specific
-  commits when no tag covers their need.
-- **v1.0.0+**: stable public API. Breaking changes require a `v2`
-  module path (`github.com/runnerq/runnerq-go/v2`), per
+- **v0.x (now).** Pre-1.0, the minor version is the breaking-change
+  boundary: a release with any `breaking` PR bumps the minor (v0.6 → v0.7),
+  and so does one with new features. A patch release (v0.6.0 → v0.6.1) only
+  fixes bugs and never breaks the API or the schema. Pin a minor
+  (`v0.6.x`) to stay compatible.
+- **v1.0.0 and later.** Breaking changes need a new major and module path
+  (`github.com/runnerq/runnerq-go/v2`), per
   [Go module versioning](https://go.dev/ref/mod#major-version-suffixes).
+  Features bump the minor, fixes the patch.
+- Between releases, depend on a commit with a pseudo-version
+  (`go get github.com/runnerq/runnerq-go@<commit>`).
 
-The "public API" surface includes:
+### What the policy covers
 
-- The `runnerq` package: `Builder()`, `WorkerEngine`, `WorkerConfig`,
-  `ActivityHandler`, `ActivityContext`, `ActivityExecutor`,
-  `ActivityFuture`, `ActivityBuilder`, error types and constants.
-- The `storage` package: `Storage`, `QueueStorage`, `ResultStorage`,
-  `QueryStorage`, `CommandStorage`, `LeaseConfigurer` interfaces and the
-  supporting data types.
-- The `storage/storagetest` package: `Run()`, `Harness`, `Reader`.
-- The `storage/postgres` package: `New()`, `WithConfig()`,
-  `PostgresBackend`.
-- The `conductor` module (`github.com/runnerq/runnerq-go/conductor`):
-  `Start()`, `Config`, `Agent`. It is its own module so the SDK doesn't
-  depend on what only the agent needs. Release it with the SDK: tag
-  `conductor/vX.Y.Z` on the same commit as `vX.Y.Z`, after pointing
-  `conductor/go.mod`'s `require github.com/runnerq/runnerq-go` at `vX.Y.Z`
-  (its `replace ../` serves development in this repository only).
+- The public API: exported names in `runnerq`, `executor`, `storage`,
+  `storage/storagetest`, `storage/postgres`, and the `conductor` module
+  (`Start()`, `Config`, `Agent`, `Handler`).
+- The Postgres schema: from v0.6 on, schema changes are additive migrations
+  (new tables, new nullable columns), so a new SDK can run beside the
+  previous minor during a rolling deploy. The upgrade test in CI checks this
+  against the previous release. A change that cannot be additive is a
+  breaking change.
+- Supported toolchains: Go 1.25, 1.26 and 1.27, and Postgres 14 to 18, as
+  tested in CI. Raising the Go floor or dropping a Postgres major is a
+  breaking change.
 
-Internal types (lowercase) and the `examples/` directory carry no
-stability guarantee.
+### What it does not cover
 
-## What is *not* covered by stability guarantees
-
-- Database schema columns added defensively for future use, where a
-  breaking change to the column would also bump the major.
-- The `ShutdownGraceSeconds` default (30s). Operational tuning, may
-  change.
-- Exact wording of structured-log fields. Field *names* are stable;
-  human-readable messages are not.
-
-## Pre-release flow (optional)
-
-If you want a `vX.Y.Z-rc.N` to live alongside the stable line for a
-while, the same tag-and-publish flow applies — release-drafter handles
-pre-release tags fine. The Go module proxy treats them as pre-releases
-(`go get`'s default `@latest` will not pick them up; users opt in
-explicitly).
+- Unexported names, `internal/` packages and `examples/`.
+- Operational defaults such as `ShutdownGraceSeconds` (30s).
+- Wording of log messages. Structured-log field *names* are stable.
 
 ## After publishing
 
-1. Bump the example `go.mod` files if the new release adds APIs you
-   want the examples to demonstrate.
-2. Update the README's installation snippet if needed.
-3. Announce the release however you announce things — the published
-   GitHub Release URL is `https://github.com/runnerq/runnerq-go/releases/tag/vX.Y.Z`.
+1. Update the README's install snippet if it names a version.
+2. Point the upgrade test's previous-SDK ref at the new tag (the `upgrade`
+   job in `.github/workflows/ci.yml`), so the next release is checked
+   against this one.
