@@ -3,7 +3,7 @@
 The agent is its own module, so the SDK doesn't depend on it:
 
 ```sh
-go get github.com/alob-mtc/runnerq-go/conductor
+go get github.com/runnerq/runnerq-go/conductor
 ```
 
 The `conductor` package connects worker processes to RunnerQ Cloud. The agent
@@ -12,7 +12,7 @@ database, so the Cloud never connects into your network or holds database
 credentials.
 
 ```go
-import "github.com/alob-mtc/runnerq-go/conductor"
+import "github.com/runnerq/runnerq-go/conductor"
 
 agent, err := conductor.Start(ctx, engine, conductor.Config{
     URL:          "wss://cloud.runnerq.dev",

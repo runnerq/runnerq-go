@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/internal/spec"
 )
 
 // DefaultMaxRetryDelaySeconds caps retry backoff for activities that set no

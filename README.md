@@ -2,7 +2,7 @@
 
 **Durable Golang functions, with pluggable storage.**
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/alob-mtc/runnerq-go.svg)](https://pkg.go.dev/github.com/alob-mtc/runnerq-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/runnerq/runnerq-go.svg)](https://pkg.go.dev/github.com/runnerq/runnerq-go)
 [![CI](https://github.com/runnerq/runnerq-go/actions/workflows/ci.yml/badge.svg)](https://github.com/runnerq/runnerq-go/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/runnerq/runnerq-go?sort=semver)](https://github.com/runnerq/runnerq-go/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -46,12 +46,18 @@ func (h *Checkout) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) 
 ## Install
 
 ```bash
-go get github.com/alob-mtc/runnerq-go@main
+go get github.com/runnerq/runnerq-go@main
 ```
 
 Requires Go 1.27. The API in this README is on `main` and not in a tagged
 release yet. The latest release, v0.5.1, has the older
-[named-activity API](https://github.com/runnerq/runnerq-go/tree/v0.5.1#readme).
+[named-activity API](https://github.com/runnerq/runnerq-go/tree/v0.5.1#readme)
+and the old module path, `github.com/alob-mtc/runnerq-go`. To move to this
+one, rewrite your imports:
+
+```bash
+grep -rl alob-mtc/runnerq-go --include='*.go' . | xargs sed -i 's#github.com/alob-mtc/runnerq-go#github.com/runnerq/runnerq-go#g'
+```
 
 ## Quick start
 
@@ -64,8 +70,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/alob-mtc/runnerq-go"
-    "github.com/alob-mtc/runnerq-go/storage/postgres"
+    "github.com/runnerq/runnerq-go"
+    "github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 type Greeting struct{ runnerq.DefaultDeadLetterHandler }

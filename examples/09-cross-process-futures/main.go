@@ -25,8 +25,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 type ResizeImage struct {

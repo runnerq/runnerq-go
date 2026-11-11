@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/alob-mtc/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/internal/spec"
 )
 
 // StorageErrorKind numbers are stored and sent on the wire; runnerq-spec

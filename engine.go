@@ -19,8 +19,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/executor"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/executor"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // WorkerEngine claims activities from its backend and runs their handlers.

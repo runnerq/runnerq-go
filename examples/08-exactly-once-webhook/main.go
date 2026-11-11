@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 // processed counts how many times each event was actually handled.

@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/internal/spectest"
+	"github.com/runnerq/runnerq-go/internal/spectest"
 )
 
 func TestSpecCheckpointID(t *testing.T) {

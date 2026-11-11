@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 type slowHandler struct {

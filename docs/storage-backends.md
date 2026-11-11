@@ -8,7 +8,7 @@ durable" below).
 ## PostgreSQL
 
 ```go
-import "github.com/alob-mtc/runnerq-go/storage/postgres"
+import "github.com/runnerq/runnerq-go/storage/postgres"
 
 backend, err := postgres.New(ctx, "postgres://user:pass@localhost/runnerq", "my_queue")
 // or, with lease/pool tuning:

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // Lease recovery: an expired claim is presumed dead; the reaper requeues it as

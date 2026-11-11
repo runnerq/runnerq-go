@@ -19,8 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/alob-mtc/runnerq-go/internal/spec"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // PostgresBackend is RunnerQ's PostgreSQL storage backend for one queue.

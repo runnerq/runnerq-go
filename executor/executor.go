@@ -117,7 +117,7 @@ type Announcer interface {
 // ThisSDK names the runnerq-go SDK in this binary; Version is "unknown"
 // without build information.
 func ThisSDK() SDK {
-	const module = "github.com/alob-mtc/runnerq-go"
+	const module = "github.com/runnerq/runnerq-go"
 	sdk := SDK{Name: "runnerq-go", Version: "unknown", Language: "go"}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

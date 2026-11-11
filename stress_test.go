@@ -27,8 +27,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/alob-mtc/runnerq-go/storage"
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
+	"github.com/runnerq/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 func stressDSN(t *testing.T) string {
