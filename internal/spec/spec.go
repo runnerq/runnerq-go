@@ -5,7 +5,7 @@
 package spec
 
 // Version is the runnerq-spec release these constants come from.
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 // SchemaAdvisoryLockKey is the Postgres advisory lock every implementation
 // holds while it creates, migrates or checks the schema (0x52554E4E45525121,
