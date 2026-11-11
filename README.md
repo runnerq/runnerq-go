@@ -233,6 +233,24 @@ executor.ActivityNamed("send_email").
 </details>
 
 <details>
+<summary><strong>Cron schedules</strong></summary>
+
+Declare a schedule on the engine and every engine of the queue fires it, once
+per tick, in any IANA time zone and across daylight-saving changes. Pause,
+resume, trigger and list schedules from any process.
+
+```go
+engine.RegisterSchedule(runnerq.Schedule{
+    Name: "nightly-report", Cron: "30 2 * * *", Timezone: "Europe/London",
+    Activity: runnerq.NameOf[NightlyReport](),
+})
+```
+
+See [Schedules](docs/schedules.md).
+
+</details>
+
+<details>
 <summary><strong>Pluggable storage</strong></summary>
 
 PostgreSQL is built in. To use something else, implement `storage.Storage` and
@@ -271,6 +289,7 @@ own README. `docker compose up -d` once, then `go run .` in any of them.
 | 10 | [retries-and-dead-letter](examples/10-retries-and-dead-letter/) | backoff, the dead-letter queue, `OnDeadLetter` |
 | 11 | [retention](examples/11-retention/) | TTL cleanup of completed workflows |
 | 12 | [workload-isolation](examples/12-workload-isolation/) | many worker fleets sharing one queue |
+| 13 | [cron-schedules](examples/13-cron-schedules/) | a cron schedule fired once per tick across engines |
 
 ## How it compares
 
@@ -300,6 +319,7 @@ Full reference in [`docs/`](docs/):
 - [Workflows & Activities](docs/workflows.md)
 - [Durable Execution](docs/durable-execution.md) — `Step`, `Run`, `Sleep`, signals, versioning
 - [Retries & Dead Letter](docs/retries-and-dead-letter.md)
+- [Schedules](docs/schedules.md) — cron schedules, time zones, catch-up
 - [Configuration](docs/configuration.md) — tuning, scheduling, workload isolation, retention
 - [Observability](docs/observability.md) — reading activities from code, worker snapshots, metrics
 - [Conductor agent](docs/conductor.md) — connecting workers to a console

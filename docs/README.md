@@ -10,6 +10,7 @@ are the deeper reference.
 - **[Workflows & Activities](workflows.md)** — handlers, the activity context, spawning child activities, getting results, awaiting across processes.
 - **[Durable Execution](durable-execution.md)** — the core: `Step`, `ctx.RunStep`, `ctx.Sleep`, `WaitForSignal`, how parents park and resume, and versioning across deploys.
 - **[Retries & Dead Letter](retries-and-dead-letter.md)** — error types, backoff, delivery semantics, lease recovery, the dead-letter queue.
+- **[Schedules](schedules.md)** — cron schedules: declaring, managing, time zones and daylight saving, catch-up.
 - **[Configuration](configuration.md)** — builder options, defaults, lease/pool tuning, scheduling, workload isolation, retention.
 - **[Observability](observability.md)** — reading activities from code, worker snapshots, metrics.
 - **[Conductor agent](conductor.md)** — connecting workers to a console.

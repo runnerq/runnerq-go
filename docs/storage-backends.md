@@ -115,6 +115,13 @@ Commands are idempotent by id: the backend records each applied command and
 its result, replays it on redelivery and rejects the id when reused with
 different input.
 
+`storage.ScheduleStorage` (also optional) stores cron schedules and fires
+due ones: each in one transaction that enqueues its fire times under the key
+`schedule:<name>:<fire time>` and advances its next fire time, claiming the
+schedule so concurrent engines skip it. Use `storage.ScheduleFireTimes` and
+`storage.ScheduledActivity` so the fire times match the other SDKs'. Engines
+fire schedules whenever the backend implements it. See [Schedules](schedules.md).
+
 ### Proving a backend durable
 
 `storage/storagetest` is the conformance suite: it states every behaviour the
@@ -135,7 +142,8 @@ func TestConformance(t *testing.T) { storagetest.Run(t, harness{}) }
 
 The harness supplies only what the interface cannot express: opening a
 backend on a named queue (two opens on one queue stand in for two processes)
-and forcing a lease to expire. To check what a backend stored, the suite also
+and forcing a lease to expire (and, optionally, moving a schedule's next fire
+time: `storagetest.ScheduleClock`). To check what a backend stored, the suite also
 reads it back through `storagetest.Reader` (`GetActivity`,
 `GetActivityEvents`, `GetActivitySteps`, `GetChildren`, `GetSubtree`,
 `ListDeadLetter`), which the backend implements alongside `storage.Storage`;

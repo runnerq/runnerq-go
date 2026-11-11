@@ -227,6 +227,43 @@ CREATE INDEX IF NOT EXISTS idx_runnerq_dependencies_result
 -- reads any more.
 DROP TABLE IF EXISTS runnerq_worker_pools;
 `},
+	{Name: "0003_schedules", SQL: `-- Cron schedules (schedules.md). A schedule belongs to a queue and is named
+-- within it. Workers fire due schedules: in one transaction each claims the
+-- row (FOR UPDATE SKIP LOCKED), enqueues an activity per fire time with the
+-- idempotency key schedule:<name>:<fire time>, and advances next_fire_at, so
+-- a tick fires once however many workers race for it.
+--
+-- payload and serialization are the fired activity's input, as in
+-- runnerq_inputs. options holds the fired activity's execution options
+-- (priority, max_retries, timeout_seconds, retry_delay_seconds,
+-- max_retry_delay_seconds, metadata); an absent key takes the default
+-- schedules.md gives. catch_up is 'skip', 'one' or 'all'; catch_up_limit
+-- caps how many due ticks 'all' fires at once.
+CREATE TABLE IF NOT EXISTS runnerq_schedules (
+    queue_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    cron TEXT NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    activity_type TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT 'null'::jsonb,
+    serialization TEXT NOT NULL DEFAULT 'json-v1',
+    options JSONB NOT NULL DEFAULT '{}'::jsonb,
+    catch_up TEXT NOT NULL DEFAULT 'one',
+    catch_up_limit INTEGER NOT NULL DEFAULT 100,
+    paused BOOLEAN NOT NULL DEFAULT FALSE,
+    next_fire_at TIMESTAMPTZ NOT NULL,
+    last_fire_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (queue_name, name)
+);
+
+-- The due scan: WHERE queue_name = $1 AND NOT paused AND next_fire_at <= NOW()
+-- ORDER BY next_fire_at. Paused schedules are left out.
+CREATE INDEX IF NOT EXISTS idx_runnerq_schedules_due
+    ON runnerq_schedules (queue_name, next_fire_at)
+    WHERE NOT paused;
+`},
 }
 
 // PostgresConcurrentIndexes are built in order after the migrations.
@@ -345,6 +382,23 @@ var PostgresCatalog = Catalog{
 			{Name: "state", Type: "text", Nullable: false, Default: ""},
 			{Name: "step", Type: "text", Nullable: true, Default: ""},
 		}},
+		{Name: "runnerq_schedules", PrimaryKey: []string{"queue_name", "name"}, Columns: []CatalogColumn{
+			{Name: "activity_type", Type: "text", Nullable: false, Default: ""},
+			{Name: "catch_up", Type: "text", Nullable: false, Default: "'one'::text"},
+			{Name: "catch_up_limit", Type: "int4", Nullable: false, Default: "100"},
+			{Name: "created_at", Type: "timestamptz", Nullable: false, Default: "now()"},
+			{Name: "cron", Type: "text", Nullable: false, Default: ""},
+			{Name: "last_fire_at", Type: "timestamptz", Nullable: true, Default: ""},
+			{Name: "name", Type: "text", Nullable: false, Default: ""},
+			{Name: "next_fire_at", Type: "timestamptz", Nullable: false, Default: ""},
+			{Name: "options", Type: "jsonb", Nullable: false, Default: "'{}'::jsonb"},
+			{Name: "paused", Type: "bool", Nullable: false, Default: "false"},
+			{Name: "payload", Type: "jsonb", Nullable: false, Default: "'null'::jsonb"},
+			{Name: "queue_name", Type: "text", Nullable: false, Default: ""},
+			{Name: "serialization", Type: "text", Nullable: false, Default: "'json-v1'::text"},
+			{Name: "timezone", Type: "text", Nullable: false, Default: "'UTC'::text"},
+			{Name: "updated_at", Type: "timestamptz", Nullable: false, Default: "now()"},
+		}},
 	},
 	Indexes: []CatalogIndex{
 		{Name: "idx_runnerq_commands_created", Table: "runnerq_commands", Definition: "CREATE INDEX idx_runnerq_commands_created ON runnerq_commands USING btree (created_at)"},
@@ -360,6 +414,7 @@ var PostgresCatalog = Catalog{
 		{Name: "idx_runnerq_results_by_owner", Table: "runnerq_results", Definition: "CREATE INDEX idx_runnerq_results_by_owner ON runnerq_results USING btree (owner_activity_id) WHERE (owner_activity_id IS NOT NULL)"},
 		{Name: "idx_runnerq_root_children", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_root_children ON runnerq_activities USING btree (root_activity_id) WHERE (parent_activity_id IS NOT NULL)"},
 		{Name: "idx_runnerq_root_terminal", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_root_terminal ON runnerq_activities USING btree (queue_name, status, completed_at) WHERE ((parent_activity_id IS NULL) AND (status = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text])))"},
+		{Name: "idx_runnerq_schedules_due", Table: "runnerq_schedules", Definition: "CREATE INDEX idx_runnerq_schedules_due ON runnerq_schedules USING btree (queue_name, next_fire_at) WHERE (NOT paused)"},
 	},
 	RetiredColumns: []string{"runnerq_activities.payload"},
 	RetiredIndexes: []string{"idx_runnerq_dequeue_effective", "idx_runnerq_dequeue_order", "idx_runnerq_query_status_created", "idx_runnerq_activities_processing", "idx_runnerq_root_id", "idx_runnerq_root_terminal_age", "idx_runnerq_results_owner", "idx_runnerq_completed_non_cron", "idx_runnerq_completed_cron", "idx_runnerq_dead_letter", "idx_runnerq_root_only", "idx_runnerq_root_status", "idx_runnerq_query_type_created", "idx_runnerq_dependencies_producer"},

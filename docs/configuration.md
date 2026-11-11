@@ -64,11 +64,9 @@ executor.ActivityNamed("send_reminder").Payload(p).Delay(1 * time.Hour).Execute(
 For durable, in-workflow waits use `ctx.Sleep` instead — see
 [Durable Execution](durable-execution.md).
 
-There is no built-in cron scheduler. To run activities on a schedule, drive
-enqueues from your own cron/ticker and tag them with
-`Metadata("source", "cron")` so you can find them by that tag. Use
-an idempotency key like `cron:<job>:<tick-time>` to make each tick
-exactly-once across a cluster.
+To run an activity on a cron expression, declare a schedule:
+`engine.RegisterSchedule(runnerq.Schedule{Name: "nightly", Cron: "0 2 * * *", Activity: "report"})`.
+Every engine of the queue fires it, once per tick. See [Schedules](schedules.md).
 
 ## Workload isolation
 

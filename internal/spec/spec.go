@@ -41,6 +41,21 @@ const SerializationJSON = "json-v1"
 // {json, meta} envelope.
 const SerializationSuperJSON = "superjson-v1"
 
+// ScheduleKeyPrefix is the prefix of the application idempotency key of an
+// activity a schedule fires: schedule:<name>:<fire time>, the fire time in RFC
+// 3339 UTC to the second (schedules.md). Stored encoded as a business key.
+const ScheduleKeyPrefix = "schedule:"
+
+// ScheduleCatchUpGraceSeconds is how late a schedule's tick may be fired and
+// still count as on time: catch_up 'skip' fires a due tick only when it is
+// less than this many seconds old (schedules.md).
+const ScheduleCatchUpGraceSeconds = 60
+
+// ScheduleCatchUpLimitDefault is how many due ticks catch_up 'all' fires at
+// once when a schedule sets none: runnerq_schedules.catch_up_limit's default
+// (schedules.md).
+const ScheduleCatchUpLimitDefault = 100
+
 // The kinds of storage error. The numbers are stored (runnerq_commands
 // err_kind) and sent on the wire, so they never change.
 const (
