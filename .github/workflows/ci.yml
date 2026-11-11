@@ -175,3 +175,55 @@ jobs:
       # Individual findings that are intended carry a `#nosec <rule> -- reason`.
       - name: gosec
         run: gosec -exclude=G115 -exclude-dir=examples -exclude-dir=spec ./...
+
+  upgrade:
+    name: Upgrade from previous SDK
+    runs-on: ubuntu-latest
+    env:
+      RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
+      # Override with the repository variable UPGRADE_FROM (any git ref).
+      UPGRADE_FROM: ${{ vars.UPGRADE_FROM }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: runnerq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The previous SDK may need a newer toolchain than the floor; let it
+      # switch (GOTOOLCHAIN is left at auto).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      # The previous SDK is the latest release tag from v0.6.0 on. Releases
+      # before v0.6.0 predate the runnerq-spec schema and cannot be upgraded
+      # in place, so until v0.6.0 is tagged it is the merge base with main.
+      - name: Choose the previous SDK
+        run: |
+          ref="$UPGRADE_FROM"
+          if [ -z "$ref" ]; then
+            tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true)
+            if [ -n "$tag" ] && [ "$(printf '%s\nv0.6.0\n' "$tag" | sort -V | head -1)" = v0.6.0 ]; then
+              ref="$tag"
+            else
+              ref=$(git merge-base HEAD origin/main)
+            fi
+          fi
+          echo "Upgrading from $ref"
+          echo "RUNNERQ_UPGRADE_FROM=$ref" >> "$GITHUB_ENV"
+
+      - name: Upgrade test
+        run: go test ./internal/upgradetest -run TestUpgradeFromPreviousSDK -count=1 -v -timeout=5m

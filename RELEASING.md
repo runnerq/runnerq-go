@@ -94,6 +94,7 @@ the first time someone runs `go get github.com/runnerq/runnerq-go@vX.Y.Z`.
 ## After publishing
 
 1. Update the README's install snippet if it names a version.
-2. Point the upgrade test's previous-SDK ref at the new tag (the `upgrade`
-   job in `.github/workflows/ci.yml`), so the next release is checked
-   against this one.
+2. Nothing to do for the upgrade test: the `upgrade` CI job upgrades from
+   the latest `v*` tag from v0.6.0 on (before that, from the merge base with
+   `main`, because earlier releases predate the runnerq-spec schema). Set
+   the repository variable `UPGRADE_FROM` to a ref to override it.
