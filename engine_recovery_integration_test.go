@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/storage"
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/runnerq/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 // Runs only as the child of the process-death test below. The checkpoint has

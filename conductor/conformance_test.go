@@ -13,11 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/runnerq/runnerq-spec/schemacheck"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/conductor/internal/wire"
-	"github.com/alob-mtc/runnerq-go/internal/spec"
-	"github.com/alob-mtc/runnerq-go/internal/spectest"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/conductor/internal/wire"
+	"github.com/runnerq/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/internal/spectest"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // protocolSchema is the spec's conductor schema and its messages by type.

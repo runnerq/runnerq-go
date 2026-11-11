@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/alob-mtc/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/internal/spec"
 )
 
 // No-op DDL still locks: ADD COLUMN IF NOT EXISTS takes ACCESS EXCLUSIVE and

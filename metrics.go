@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/executor"
+	"github.com/runnerq/runnerq-go/executor"
 )
 
 // MetricsSink receives the engine's counters and durations.

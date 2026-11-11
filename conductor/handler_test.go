@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/alob-mtc/runnerq-go/conductor/internal/wire"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/conductor/internal/wire"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 func TestHandlerServesStorage(t *testing.T) {

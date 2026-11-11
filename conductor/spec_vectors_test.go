@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/alob-mtc/runnerq-go/internal/spectest"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/internal/spectest"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 func TestSpecPlainJSON(t *testing.T) {

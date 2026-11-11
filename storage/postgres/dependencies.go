@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // Result publication and durable parking must take turns per result, or a

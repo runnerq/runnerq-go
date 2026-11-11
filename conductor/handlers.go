@@ -12,11 +12,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/conductor/internal/wire"
-	"github.com/alob-mtc/runnerq-go/executor"
-	"github.com/alob-mtc/runnerq-go/internal/spec"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/conductor/internal/wire"
+	"github.com/runnerq/runnerq-go/executor"
+	"github.com/runnerq/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // maxEmbedded bounds steps and events embedded in activities.get.

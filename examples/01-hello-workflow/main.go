@@ -19,8 +19,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 // SignupWorkflow registers a user and sends a welcome email — two side

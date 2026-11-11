@@ -3,8 +3,8 @@ package postgres
 import (
 	"context"
 
-	"github.com/alob-mtc/runnerq-go/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // OpenExisting opens a backend on a schema that is already current, without

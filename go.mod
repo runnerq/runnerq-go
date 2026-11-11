@@ -1,4 +1,4 @@
-module github.com/alob-mtc/runnerq-go
+module github.com/runnerq/runnerq-go
 
 go 1.27
 

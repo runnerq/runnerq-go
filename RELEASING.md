@@ -56,7 +56,7 @@ publishes it.
 
 That's it — no binary artifacts to build, no `go release` step needed. Go's
 [module proxy](https://proxy.golang.org/) auto-discovers the new tag the
-moment any user runs `go get github.com/alob-mtc/runnerq-go@vX.Y.Z`.
+moment any user runs `go get github.com/runnerq/runnerq-go@vX.Y.Z`.
 
 ## Versioning policy
 
@@ -64,7 +64,7 @@ moment any user runs `go get github.com/alob-mtc/runnerq-go@vX.Y.Z`.
   (`v0.0.0-<date>-<sha>`) are how downstream apps pin to specific
   commits when no tag covers their need.
 - **v1.0.0+**: stable public API. Breaking changes require a `v2`
-  module path (`github.com/alob-mtc/runnerq-go/v2`), per
+  module path (`github.com/runnerq/runnerq-go/v2`), per
   [Go module versioning](https://go.dev/ref/mod#major-version-suffixes).
 
 The "public API" surface includes:
@@ -78,11 +78,11 @@ The "public API" surface includes:
 - The `storage/storagetest` package: `Run()`, `Harness`, `Reader`.
 - The `storage/postgres` package: `New()`, `WithConfig()`,
   `PostgresBackend`.
-- The `conductor` module (`github.com/alob-mtc/runnerq-go/conductor`):
+- The `conductor` module (`github.com/runnerq/runnerq-go/conductor`):
   `Start()`, `Config`, `Agent`. It is its own module so the SDK doesn't
   depend on what only the agent needs. Release it with the SDK: tag
   `conductor/vX.Y.Z` on the same commit as `vX.Y.Z`, after pointing
-  `conductor/go.mod`'s `require github.com/alob-mtc/runnerq-go` at `vX.Y.Z`
+  `conductor/go.mod`'s `require github.com/runnerq/runnerq-go` at `vX.Y.Z`
   (its `replace ../` serves development in this repository only).
 
 Internal types (lowercase) and the `examples/` directory carry no
@@ -111,4 +111,4 @@ explicitly).
    want the examples to demonstrate.
 2. Update the README's installation snippet if needed.
 3. Announce the release however you announce things — the published
-   GitHub Release URL is `https://github.com/alob-mtc/runnerq-go/releases/tag/vX.Y.Z`.
+   GitHub Release URL is `https://github.com/runnerq/runnerq-go/releases/tag/vX.Y.Z`.

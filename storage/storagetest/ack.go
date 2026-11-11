@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // Acknowledgements: every state transition an execution makes is fenced on

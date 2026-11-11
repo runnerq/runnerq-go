@@ -3,7 +3,7 @@ package postgres
 import (
 	"strings"
 
-	"github.com/alob-mtc/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/internal/spec"
 )
 
 // schemaSql is every runnerq-spec migration, run as one multi-statement exec

@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-go get github.com/alob-mtc/runnerq-go
+go get github.com/runnerq/runnerq-go
 ```
 
 Requires Go 1.27+ and a PostgreSQL database (12+).
@@ -14,7 +14,7 @@ The Postgres backend creates its own schema on first connect (idempotently),
 so there's no migration step:
 
 ```go
-import "github.com/alob-mtc/runnerq-go/storage/postgres"
+import "github.com/runnerq/runnerq-go/storage/postgres"
 
 backend, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/mydb", "my_app")
 if err != nil {

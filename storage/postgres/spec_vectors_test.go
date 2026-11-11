@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/alob-mtc/runnerq-go/internal/spectest"
+	"github.com/runnerq/runnerq-go/internal/spectest"
 )
 
 func TestSpecCanonicalStatus(t *testing.T) {

@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/storage/postgres"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/storage/postgres"
 )
 
 // reserveRuns counts how many times the reserve child actually executes.
