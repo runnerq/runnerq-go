@@ -60,6 +60,11 @@ type QueuedActivity struct {
 	// (json-v1), all the Go SDK writes. The TypeScript SDK sets superjson-v1;
 	// backends store it with the payload and return it with claims.
 	Serialization string `json:",omitempty"`
+	// CodeVersion pins the activity to a code version (runnerq-spec
+	// versions.md): only workers serving it, or unversioned ones, claim it.
+	// Empty is unstamped. Backends ignore it for a child and store its root's
+	// version instead, and return the stored version with claims.
+	CodeVersion string `json:",omitempty"`
 }
 
 // SerializationJSON is plain JSON, the encoding an empty Serialization means.
@@ -92,13 +97,13 @@ type DequeuedActivity struct {
 // in one round trip; when present the engine claims exactly as many as it has
 // idle slots instead of looping Dequeue per slot.
 //
-// DequeueBatch claims at most limit activities under Dequeue's eligibility and
-// ordering rules. workerIDPrefix is fresh per call; each LeaseID must be unique
+// DequeueBatch claims at most limit activities under Dequeue's eligibility,
+// version and ordering rules. workerIDPrefix is fresh per call; each LeaseID must be unique
 // and derived from it (e.g. "<prefix>:<activity id>") so tokens never collide
 // across calls. timeout means what it does for Dequeue; an empty result with a
 // nil error means nothing became claimable in time.
 type BatchQueueStorage interface {
-	DequeueBatch(ctx context.Context, workerIDPrefix string, limit int, timeout time.Duration, activityTypes []string) ([]DequeuedActivity, error)
+	DequeueBatch(ctx context.Context, workerIDPrefix string, limit int, timeout time.Duration, activityTypes, versions []string) ([]DequeuedActivity, error)
 }
 
 // ActivityResult holds result data from a completed activity.
@@ -189,6 +194,7 @@ type ActivitySnapshot struct {
 	ParentActivityID  *uuid.UUID        `json:"parent_activity_id,omitempty"`
 	RootActivityID    *uuid.UUID        `json:"root_activity_id,omitempty"`
 	Depth             uint16            `json:"depth"`
+	CodeVersion       *string           `json:"code_version,omitempty"`
 }
 
 // ActivityEventType classifies stored events: only what the activity row
@@ -214,6 +220,7 @@ const (
 	EventRunNow          ActivityEventType = "RunNow"
 	EventRescheduled     ActivityEventType = "Rescheduled"
 	EventPriorityChanged ActivityEventType = "PriorityChanged"
+	EventRepinned        ActivityEventType = "Repinned"
 )
 
 // ActivityEvent records a lifecycle event.
@@ -262,7 +269,10 @@ type QueueStorage interface {
 	Enqueue(ctx context.Context, activity QueuedActivity) error
 	// Dequeue claims the next runnable activity, blocking up to timeout for
 	// work (0: one non-blocking attempt); (nil, nil) means nothing was claimable.
-	Dequeue(ctx context.Context, workerID string, timeout time.Duration, activityTypes []string) (*QueuedActivity, error)
+	// Empty activityTypes claims every type. Non-empty versions claims only
+	// unstamped activities and those whose CodeVersion is one of them (version
+	// pinning); empty versions applies no version filter.
+	Dequeue(ctx context.Context, workerID string, timeout time.Duration, activityTypes, versions []string) (*QueuedActivity, error)
 	// AckSuccess completes an activity. The result MUST be stored atomically
 	// with the status change, and a result record MUST be written even when
 	// result is nil so waiters always resolve. workerID is the unique execution

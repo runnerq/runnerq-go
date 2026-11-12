@@ -71,6 +71,7 @@ var activityFields = map[string]queryField{
 	"completed_at":  {expr: "a.completed_at", kind: kindTime, nullable: true},
 	"updated_at":    {expr: updatedAtSQL, kind: kindTime},
 	"executor_id":   {expr: "NULLIF(split_part(a.current_worker_id, ':', 1), '')", kind: kindString, nullable: true},
+	"version":       {expr: "a.code_version", kind: kindString, nullable: true},
 }
 
 var eventFields = map[string]queryField{
@@ -137,6 +138,7 @@ var canonicalEvents = map[string]string{
 	storage.EventRunNow:          storage.RecordEventRunNow,
 	storage.EventRescheduled:     storage.RecordEventRescheduled,
 	storage.EventPriorityChanged: storage.RecordEventPriorityChanged,
+	storage.EventRepinned:        storage.RecordEventRepinned,
 }
 
 func canonicalEvent(internal string) string {
@@ -182,7 +184,7 @@ func (b *PostgresBackend) QueryCapabilities() storage.QueryCapabilities {
 		ActivityFilters: fields,
 		ActivitySorts:   sorts,
 		EventFilters:    events,
-		GroupBy:         []string{"queue", "root", "status", "type"},
+		GroupBy:         []string{"queue", "root", "status", "type", "version"},
 		Buckets:         []string{"completed_at", "created_at"},
 		Durations:       []string{"queue", "run", "total"},
 	}
@@ -560,7 +562,7 @@ func activitySelect(inc storage.RecordInclude) (cols, joins string) {
 		COALESCE(a.root_activity_id, a.id), a.parent_activity_id, a.depth, a.idempotency_key,
 		a.retry_count, a.max_retries, a.created_at, a.scheduled_at, a.started_at, a.completed_at,
 		` + updatedAtSQL + `, a.timeout_seconds, a.lease_deadline_ms, a.current_worker_id, a.metadata,
-		y.detail`
+		y.detail, a.code_version`
 	// The latest park reason, only for waiting rows.
 	joins = ` LEFT JOIN LATERAL (
 			SELECT e.detail FROM runnerq_events e
@@ -597,10 +599,11 @@ func scanRecord(rows pgx.Rows, inc storage.RecordInclude, extra ...any) (storage
 		lastErrorAt          *time.Time
 		resultState          *string
 		resultData           []byte
+		version              *string
 	)
 	dest := []any{&r.ID, &r.Type, &r.Queue, &status, &priority, &r.RootID, &r.ParentID, &depth, &idemKey,
 		&retryCount, &maxRetry, &r.CreatedAt, &r.ScheduledFor, &r.StartedAt, &r.CompletedAt,
-		&r.UpdatedAt, &timeoutSeconds, &leaseMS, &workerID, &metadata, &yield}
+		&r.UpdatedAt, &timeoutSeconds, &leaseMS, &workerID, &metadata, &yield, &version}
 	if inc.Payload {
 		dest = append(dest, &payload)
 	}
@@ -630,6 +633,9 @@ func scanRecord(rows pgx.Rows, inc storage.RecordInclude, extra ...any) (storage
 	}
 	if workerID != nil && status == "processing" {
 		r.ExecutorID, _, _ = strings.Cut(*workerID, ":")
+	}
+	if version != nil {
+		r.Version = *version
 	}
 	if len(metadata) > 0 {
 		_ = json.Unmarshal(metadata, &r.Metadata)
@@ -810,6 +816,8 @@ var groupExprs = map[string]string{
 	"type":   "a.activity_type",
 	"queue":  "a.queue_name",
 	"root":   "CASE WHEN a.parent_activity_id IS NULL THEN 'true' ELSE 'false' END",
+	// Null for unstamped work, which leaves the key out.
+	"version": "a.code_version",
 }
 
 var durationExprs = map[string]string{

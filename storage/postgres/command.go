@@ -33,9 +33,10 @@ type postCommit struct {
 }
 
 type targetRow struct {
-	id     uuid.UUID
-	status string
-	parent *uuid.UUID
+	id      uuid.UUID
+	status  string
+	parent  *uuid.UUID
+	version *string
 }
 
 type ledgerItem struct {
@@ -102,6 +103,10 @@ func validateCommand(cmd storage.Command) error {
 	case storage.CommandSignal:
 		if cmd.SignalName == "" {
 			return storage.NewInvalidQueryError("name", "signal needs a name")
+		}
+	case storage.CommandRepin:
+		if cmd.Version == "" || len(cmd.Version) > storage.MaxCodeVersionBytes {
+			return storage.NewInvalidQueryError("version", fmt.Sprintf("repin needs a version of 1 to %d bytes", storage.MaxCodeVersionBytes))
 		}
 	default:
 		return storage.NewUnsupportedQueryError("kind", fmt.Sprintf("unknown command %q", cmd.Kind))
@@ -182,7 +187,7 @@ func (b *PostgresBackend) applyCommandTx(ctx context.Context, cmd storage.Comman
 		}
 	}
 
-	ids, more, err := b.resolveTargets(ctx, tx, cmd.Kind, cmd.Target)
+	ids, more, err := b.resolveTargets(ctx, tx, cmd)
 	if err != nil {
 		return nil, post, err
 	}
@@ -254,13 +259,16 @@ var eligibleSQL = map[storage.CommandKind]string{
 	storage.CommandCancel:      "a.status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')",
 	storage.CommandSetPriority: "a.status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')",
 	storage.CommandSignal:      "a.status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')",
-	storage.CommandRetry:       "a.status IN ('failed', 'dead_letter', 'cancelled')",
-	storage.CommandRunNow:      "a.status IN ('scheduled', 'retrying', 'waiting')",
-	storage.CommandReschedule:  "a.status IN ('scheduled', 'retrying')",
-	storage.CommandDelete:      "a.status IN ('completed', 'failed', 'dead_letter', 'cancelled') AND a.parent_activity_id IS NULL",
+	// And a version other than the target's (resolveTargets).
+	storage.CommandRepin:      "a.status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')",
+	storage.CommandRetry:      "a.status IN ('failed', 'dead_letter', 'cancelled')",
+	storage.CommandRunNow:     "a.status IN ('scheduled', 'retrying', 'waiting')",
+	storage.CommandReschedule: "a.status IN ('scheduled', 'retrying')",
+	storage.CommandDelete:     "a.status IN ('completed', 'failed', 'dead_letter', 'cancelled') AND a.parent_activity_id IS NULL",
 }
 
-func (b *PostgresBackend) resolveTargets(ctx context.Context, tx pgx.Tx, kind storage.CommandKind, t storage.CommandTarget) ([]uuid.UUID, bool, error) {
+func (b *PostgresBackend) resolveTargets(ctx context.Context, tx pgx.Tx, cmd storage.Command) ([]uuid.UUID, bool, error) {
+	t := cmd.Target
 	switch {
 	case len(t.IDs) > 0:
 		seen := make(map[uuid.UUID]bool, len(t.IDs))
@@ -294,8 +302,12 @@ func (b *PostgresBackend) resolveTargets(ctx context.Context, tx pgx.Tx, kind st
 	if err != nil {
 		return nil, false, err
 	}
+	eligible := eligibleSQL[cmd.Kind]
+	if cmd.Kind == storage.CommandRepin {
+		eligible += " AND a.code_version IS DISTINCT FROM " + sb.arg(cmd.Version)
+	}
 	sql := fmt.Sprintf(`SELECT a.id FROM runnerq_activities a WHERE a.queue_name = %s AND %s AND %s
-		ORDER BY a.created_at, a.id LIMIT %d`, sb.arg(b.queueName), eligibleSQL[kind], where, t.Max+1)
+		ORDER BY a.created_at, a.id LIMIT %d`, sb.arg(b.queueName), eligible, where, t.Max+1)
 	rows, err := tx.Query(ctx, sql, sb.args...)
 	if err != nil {
 		return nil, false, databaseError(err, "failed to resolve command filter")
@@ -324,7 +336,7 @@ func (b *PostgresBackend) lockRows(ctx context.Context, tx pgx.Tx, ids []uuid.UU
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT id, status, parent_activity_id FROM runnerq_activities
+	rows, err := tx.Query(ctx, `SELECT id, status, parent_activity_id, code_version FROM runnerq_activities
 		WHERE queue_name = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, b.queueName, ids)
 	if err != nil {
 		return nil, databaseError(err, "failed to lock command targets")
@@ -332,7 +344,7 @@ func (b *PostgresBackend) lockRows(ctx context.Context, tx pgx.Tx, ids []uuid.UU
 	defer rows.Close()
 	for rows.Next() {
 		var r targetRow
-		if err := rows.Scan(&r.id, &r.status, &r.parent); err != nil {
+		if err := rows.Scan(&r.id, &r.status, &r.parent, &r.version); err != nil {
 			return nil, databaseError(err, "failed to lock command targets")
 		}
 		out[r.id] = r
@@ -501,6 +513,25 @@ func (b *PostgresBackend) applyOne(ctx context.Context, tx pgx.Tx, cmd storage.C
 			post.work, after = true, "pending"
 		}
 		return ok(after), nil
+
+	case storage.CommandRepin:
+		if terminalStatuses[row.status] {
+			return skipped(row, "already finished"), nil
+		}
+		if row.version != nil && *row.version == cmd.Version {
+			return skipped(row, "already pinned to "+cmd.Version), nil
+		}
+		if err := exec(`UPDATE runnerq_activities SET code_version = $3 WHERE id = $1 AND queue_name = $2`,
+			row.id, b.queueName, cmd.Version); err != nil {
+			return storage.CommandItem{}, err
+		}
+		detail["from"], detail["to"] = row.version, cmd.Version
+		if err := event(storage.EventRepinned); err != nil {
+			return storage.CommandItem{}, err
+		}
+		// Blocked claimers serving the new version may take it now.
+		post.work = true
+		return ok(row.status), nil
 	}
 	return storage.CommandItem{}, storage.NewUnsupportedQueryError("kind", string(cmd.Kind))
 }

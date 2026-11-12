@@ -32,12 +32,33 @@ type Client struct {
 }
 
 // NewClient returns a Client on backend.
-func NewClient(backend storage.Storage) *Client {
+func NewClient(backend storage.Storage, opts ...ClientOption) *Client {
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	exec := newActivityExecutor(newBackendQueueAdapter(backend, nil), DefaultMaxActivityDepth, &announcer{}, nil)
+	exec.version = o.version
 	return &Client{
 		backend: backend,
-		exec:    newActivityExecutor(newBackendQueueAdapter(backend, nil), DefaultMaxActivityDepth, &announcer{}, nil),
+		exec:    exec,
 		queue:   queueOf(backend),
 	}
+}
+
+// ClientOption configures NewClient and NewSchedules.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct {
+	version string
+}
+
+// ClientVersion pins the roots the client submits, and the schedules it
+// upserts, to a code version (docs/versions.md), as a worker's own client
+// does with its WorkerConfig.Version. Without it they are unstamped, and
+// any worker may run them.
+func ClientVersion(v string) ClientOption {
+	return func(o *clientOptions) { o.version = v }
 }
 
 // Client returns a Client on the engine's backend. Its submissions are
@@ -352,6 +373,20 @@ func (c *Client) Reschedule(ctx context.Context, target Target, at time.Time, op
 // SetPriority changes unfinished activities' priority.
 func (c *Client) SetPriority(ctx context.Context, target Target, priority ActivityPriority, opts ...CommandOption) (*CommandResult, error) {
 	return c.apply(ctx, storage.Command{Kind: storage.CommandSetPriority, Priority: storage.ActivityPriority(priority)}, target, opts)
+}
+
+// Repin moves unfinished activities to another code version, for when old
+// work is known to be safe on new code (docs/versions.md). Only workers
+// serving version claim them from then on; a running attempt finishes where
+// it runs. Activities already on version, and finished ones, are not
+// eligible. Children spawned later take their root's version, so repin a
+// workflow by its tree (filter on root_id) or a whole version (filter on
+// version).
+func (c *Client) Repin(ctx context.Context, target Target, version string, opts ...CommandOption) (*CommandResult, error) {
+	if err := validateVersion(version); err != nil {
+		return nil, err
+	}
+	return c.apply(ctx, storage.Command{Kind: storage.CommandRepin, Version: version}, target, opts)
 }
 
 // Delete removes finished root activities with their whole tree: children,

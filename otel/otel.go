@@ -183,7 +183,7 @@ func (m *metrics) labels(l runnerq.MetricLabels) metric.MeasurementOption {
 	if o, ok := m.sets.Load(l); ok {
 		return o.(metric.MeasurementOption)
 	}
-	kv := make([]attribute.KeyValue, 0, 3)
+	kv := make([]attribute.KeyValue, 0, 4)
 	if l.Queue != "" {
 		kv = append(kv, attribute.String(runnerq.LabelQueue, l.Queue))
 	}
@@ -192,6 +192,9 @@ func (m *metrics) labels(l runnerq.MetricLabels) metric.MeasurementOption {
 	}
 	if l.Status != "" {
 		kv = append(kv, attribute.String(runnerq.LabelStatus, l.Status))
+	}
+	if l.Version != "" {
+		kv = append(kv, attribute.String(runnerq.LabelVersion, l.Version))
 	}
 	o := metric.WithAttributeSet(attribute.NewSet(kv...))
 	m.sets.Store(l, o)

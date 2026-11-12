@@ -319,7 +319,7 @@ func TestSchemaMovesInlinePayloadsToInputs(t *testing.T) {
 		t.Fatalf("input %s, want %s", input, a.Payload)
 	}
 
-	claimed, err := b.Dequeue(ctx, "w1", 0, nil)
+	claimed, err := b.Dequeue(ctx, "w1", 0, nil, nil)
 	if err != nil || claimed == nil || claimed.ID != a.ID {
 		t.Fatalf("claim after migration: %+v, %v", claimed, err)
 	}

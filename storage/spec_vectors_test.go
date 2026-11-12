@@ -99,6 +99,7 @@ func TestSpecCommandFingerprint(t *testing.T) {
 		At            time.Time       `json:"at"`
 		Priority      int             `json:"priority"`
 		Payload       json.RawMessage `json:"payload"`
+		Version       string          `json:"version"`
 	}
 	type out struct {
 		Canonical   string `json:"canonical"`
@@ -107,7 +108,8 @@ func TestSpecCommandFingerprint(t *testing.T) {
 	for _, c := range spectest.Load[in, out](t, "vectors/command_fingerprint.json") {
 		cmd := Command{Kind: CommandKind(c.Input.Kind), Target: CommandTarget{IDs: c.Input.IDs, Filter: c.Input.Filter, Max: c.Input.Max},
 			DryRun: c.Input.DryRun, CascadeChildren: c.Input.Cascade, ResetAttempts: c.Input.ResetAttempts, Reason: c.Input.Reason,
-			SignalName: c.Input.Name, At: c.Input.At, Priority: c.Input.Priority, SignalPayload: c.Input.Payload}
+			SignalName: c.Input.Name, At: c.Input.At, Priority: c.Input.Priority, SignalPayload: c.Input.Payload,
+			Version: c.Input.Version}
 		if got := CommandFingerprint(cmd); got != c.Output.Fingerprint {
 			t.Errorf("%s: got %s, want %s", c.Name, got, c.Output.Fingerprint)
 		}

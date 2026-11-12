@@ -273,7 +273,7 @@ type batchStorageCall struct {
 	types  []string
 }
 
-func (b *batchLifecycleBackend) DequeueBatch(ctx context.Context, prefix string, limit int, _ time.Duration, types []string) ([]storage.DequeuedActivity, error) {
+func (b *batchLifecycleBackend) DequeueBatch(ctx context.Context, prefix string, limit int, _ time.Duration, types, _ []string) ([]storage.DequeuedActivity, error) {
 	b.batchCalls <- batchStorageCall{prefix: prefix, limit: limit, types: append([]string(nil), types...)}
 	select {
 	case a := <-b.claims:
@@ -320,7 +320,7 @@ type batchStorageStub struct {
 	got    batchStorageCall
 }
 
-func (s *batchStorageStub) DequeueBatch(_ context.Context, prefix string, limit int, _ time.Duration, types []string) ([]storage.DequeuedActivity, error) {
+func (s *batchStorageStub) DequeueBatch(_ context.Context, prefix string, limit int, _ time.Duration, types, _ []string) ([]storage.DequeuedActivity, error) {
 	s.got = batchStorageCall{prefix: prefix, limit: limit, types: types}
 	return s.claims, nil
 }

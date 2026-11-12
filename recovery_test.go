@@ -238,7 +238,7 @@ func newLifecycleBackend() *lifecycleBackend {
 	return &lifecycleBackend{claims: make(chan storage.QueuedActivity, 4), dequeues: make(chan string, 8), filters: make(chan []string, 8), ack: make(chan error, 4)}
 }
 func (b *lifecycleBackend) SchedulesNatively() bool { return true }
-func (b *lifecycleBackend) Dequeue(ctx context.Context, w string, _ time.Duration, types []string) (*storage.QueuedActivity, error) {
+func (b *lifecycleBackend) Dequeue(ctx context.Context, w string, _ time.Duration, types, _ []string) (*storage.QueuedActivity, error) {
 	b.dequeues <- w
 	b.filters <- append([]string(nil), types...)
 	select {
