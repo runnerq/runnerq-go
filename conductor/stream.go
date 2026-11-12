@@ -128,7 +128,10 @@ func (s *streams) subscribe(ctx context.Context, data json.RawMessage) (any, err
 	go func() {
 		defer s.wg.Done()
 		if gap {
-			t.push(sctx, wire.TypeStreamGap, wire.StreamGap{SubscriptionID: id, SinceCursor: req.AfterCursor})
+			// Events must not follow an undelivered gap notice.
+			if err := t.push(sctx, wire.TypeStreamGap, wire.StreamGap{SubscriptionID: id, SinceCursor: req.AfterCursor}); err != nil {
+				return
+			}
 		}
 		t.run(sctx)
 	}()
