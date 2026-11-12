@@ -44,9 +44,9 @@ func (h *SignupWorkflow) Handle(ctx runnerq.ActivityContext, payload json.RawMes
 		return nil, runnerq.NewNonRetryError("invalid payload")
 	}
 
-	// Step 1: create the account. ctx.RunStep checkpoints the result, so this
+	// Step 1: create the account. runnerq.RunStep checkpoints the result, so this
 	// runs at most once across any number of retries or restarts.
-	user, err := ctx.RunStep("create-account", func(context.Context) (Account, error) {
+	user, err := runnerq.RunStep(ctx, "create-account", func(context.Context) (Account, error) {
 		fmt.Printf("  ▶ creating account for %s\n", in.Email)
 		return Account{UserID: "u_1001", Email: in.Email}, nil
 	})
@@ -56,7 +56,7 @@ func (h *SignupWorkflow) Handle(ctx runnerq.ActivityContext, payload json.RawMes
 
 	// Step 2: send the welcome email — only fires once the account is durably
 	// recorded, and never twice.
-	_, err = ctx.RunStep("send-welcome", func(context.Context) (bool, error) {
+	_, err = runnerq.RunStep(ctx, "send-welcome", func(context.Context) (bool, error) {
 		fmt.Printf("  ▶ sending welcome email to %s\n", in.Email)
 		return true, nil
 	})
@@ -98,8 +98,7 @@ func main() {
 
 	// Kick off the workflow and wait for its result.
 	fmt.Println("starting signup workflow...")
-	future, err := engine.GetActivityExecutor().
-		Activity[SignupWorkflow]().
+	future, err := runnerq.Activity[SignupWorkflow](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{"email":"ada@example.com"}`)).
 		Execute(ctx)
 	if err != nil {

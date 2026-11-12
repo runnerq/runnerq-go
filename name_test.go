@@ -59,16 +59,16 @@ func TestExecutorSpawnNamesMatchRegistration(t *testing.T) {
 	e.RegisterActivity(&namedHandler{})
 	exec := e.GetActivityExecutor()
 
-	if got := exec.Activity[namedHandler]().activityType; got != NameOf[namedHandler]() {
+	if got := Activity[namedHandler](exec).activityType; got != NameOf[namedHandler]() {
 		t.Fatalf("Activity[T] targets %q, want %q", got, NameOf[namedHandler]())
 	}
-	if got := exec.Activity[*namedHandler]().activityType; got != "namedHandler" {
+	if got := Activity[*namedHandler](exec).activityType; got != "namedHandler" {
 		t.Fatalf("Activity[*T] targets %q", got)
 	}
 	if got := exec.ActivityNamed("pinned").activityType; got != "pinned" {
 		t.Fatalf("ActivityNamed targets %q", got)
 	}
-	if _, ok := e.handlers[exec.Activity[namedHandler]().activityType]; !ok {
+	if _, ok := e.handlers[Activity[namedHandler](exec).activityType]; !ok {
 		t.Fatal("Activity[T] does not resolve to the registered handler")
 	}
 }

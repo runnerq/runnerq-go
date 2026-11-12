@@ -4,7 +4,7 @@ The smallest useful RunnerQ program: a durable two-step workflow.
 
 ## What this shows
 
-A workflow is just an activity handler. Inside it, each `ctx.RunStep(name, fn)`
+A workflow is just an activity handler. Inside it, each `runnerq.RunStep(ctx, name, fn)`
 is a **step** whose typed result is checkpointed in Postgres. A step whose
 result was recorded never re-runs — if the process restarted between them,
 the first would replay from its checkpoint and the second would resume. A
@@ -32,12 +32,12 @@ starting signup workflow...
 
 ```go
 func (h *SignupWorkflow) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) (json.RawMessage, error) {
-    user, err := ctx.RunStep("create-account", func(c context.Context) (Account, error) {
+    user, err := runnerq.RunStep(ctx, "create-account", func(c context.Context) (Account, error) {
         return createAccount(c, payload)   // checkpointed: runs at most once
     })
     if err != nil { return nil, err }
 
-    _, err = ctx.RunStep("send-welcome", func(c context.Context) (bool, error) {
+    _, err = runnerq.RunStep(ctx, "send-welcome", func(c context.Context) (bool, error) {
         return true, sendWelcome(c, user)  // only after the account is durable
     })
     if err != nil { return nil, err }

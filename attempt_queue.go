@@ -25,7 +25,8 @@ type attemptQueue struct {
 	owner          uuid.UUID
 	worker         string
 	persistenceCtx context.Context
-	metrics        MetricsSink
+	metrics        LabeledMetricsSink
+	labels         MetricLabels
 	awaitGrace     time.Duration // overrides awaitParkGrace when set
 }
 
@@ -45,7 +46,7 @@ func (q *attemptQueue) renew(ctx context.Context) error {
 			return err
 		}
 		if !owned {
-			return &storage.StorageError{Kind: storage.ErrClaimLost, Message: "activity was reclaimed by another execution"}
+			return &storage.StorageError{Kind: storage.ErrClaimLost, Message: "activity was cancelled or reclaimed by another execution"}
 		}
 	}
 	return nil
@@ -72,11 +73,13 @@ func (q *attemptQueue) EnqueueIdempotent(ctx context.Context, a *activity) (*sto
 // heartbeat renews the claim every interval until ctx ends or the claim is
 // lost, when it calls revoke with the ErrClaimLost error. A failed renewal is
 // retried on the next beat: the lease already covers the handler's whole
-// timeout, so a shorter outage costs nothing.
+// timeout, so a shorter outage costs nothing. When the backend is a
+// storage.ResultNotifier, a hint that the activity's own result was stored
+// (a cancel stores one) beats at once, so a cancelled handler stops promptly.
 //
-// Beats run on a timer, not a goroutine per activity. The returned stop waits
-// for a beat in progress, so no renewal races the acknowledgement after it (a
-// late beat would find the claim released and report it lost).
+// Beats run on a timer. The returned stop waits for a beat in progress, so no
+// renewal races the acknowledgement after it (a late beat would find the
+// claim released and report it lost).
 func (q *attemptQueue) heartbeat(ctx context.Context, interval time.Duration, revoke context.CancelCauseFunc) (stop func()) {
 	if _, ok := q.backend.(storage.AttemptLeaseStorage); !ok {
 		return func() {}
@@ -108,7 +111,7 @@ func (q *attemptQueue) heartbeat(ctx context.Context, interval time.Duration, re
 				revoke(err)
 				return
 			}
-			metrics.IncCounter(metricHeartbeatFailed, 1)
+			metrics.AddCounter(MetricActivityHeartbeatFailed, 1, q.labels)
 			slog.Warn("Could not renew activity claim; retrying on the next heartbeat", "activity_id", q.owner, "error", err)
 		}
 		timer.Reset(interval)
@@ -116,6 +119,24 @@ func (q *attemptQueue) heartbeat(ctx context.Context, interval time.Duration, re
 	mu.Lock()
 	timer = time.AfterFunc(interval, beat)
 	mu.Unlock()
+	if n, ok := q.backend.(storage.ResultNotifier); ok {
+		hint, stopHint := n.NotifyResult(q.owner)
+		go func() {
+			defer stopHint()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-hint:
+					mu.Lock()
+					if !stopped {
+						timer.Reset(0)
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
 	return func() {
 		cancel()
 		mu.Lock()
@@ -144,7 +165,7 @@ func (q *attemptQueue) WaitForResult(ctx context.Context, id uuid.UUID) (out *ac
 }
 
 func (q *attemptQueue) StoreResult(_ context.Context, id, owner uuid.UUID, result activityResult, step string) error {
-	return retryStorage(q.persistenceCtx, "persist checkpoint", q.metrics, q.renew, func(ctx context.Context) error {
+	return retryStorage(q.persistenceCtx, "persist checkpoint", q.metrics, q.labels, q.renew, func(ctx context.Context) error {
 		if b, ok := q.backend.(storage.CheckpointStorage); ok {
 			return b.StoreCheckpoint(ctx, id, owner, q.worker, storage.ActivityResult{Data: result.Data, State: storage.ResultState(result.State)}, step)
 		}
@@ -154,7 +175,7 @@ func (q *attemptQueue) StoreResult(_ context.Context, id, owner uuid.UUID, resul
 
 func (q *attemptQueue) registerFuture(ctx context.Context, id uuid.UUID) error {
 	if b, ok := q.backend.(storage.DependencyStorage); ok {
-		return retryStorage(ctx, "register result dependency", q.metrics, q.renew, func(ctx context.Context) error {
+		return retryStorage(ctx, "register result dependency", q.metrics, q.labels, q.renew, func(ctx context.Context) error {
 			return b.RegisterDependency(ctx, q.owner, id, q.worker)
 		})
 	}
@@ -172,7 +193,7 @@ func (q *attemptQueue) retryRead(ctx context.Context, operation string, fn func(
 		}
 		return err
 	}
-	return retryStorage(ctx, operation, q.metrics, renew, func(ctx context.Context) error {
+	return retryStorage(ctx, operation, q.metrics, q.labels, renew, func(ctx context.Context) error {
 		if lost != nil {
 			return lost
 		}

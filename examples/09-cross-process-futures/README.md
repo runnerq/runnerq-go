@@ -33,7 +33,7 @@ enqueued job a6ac3c8a-...
 
 ```go
 // Web tier: enqueue, return the handle.
-fut, _ := executor.Activity[ResizeImage]().Payload(p).Execute(ctx)
+fut, _ := runnerq.Activity[ResizeImage](executor).Payload(p).Execute(ctx)
 respond(map[string]string{"id": fut.ActivityID().String()})
 
 // Anywhere else, later, with only the ID and a backend:

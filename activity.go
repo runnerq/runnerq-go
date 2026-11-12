@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // ActivityPriority orders execution: higher priorities are claimed first.
@@ -77,16 +79,31 @@ const (
 	NoReuse
 )
 
+// ActivityStatus is an activity's status as Client reports it (the canonical
+// statuses every backend maps onto): a retry waiting for its backoff is
+// scheduled, and a claimed activity is running.
 type ActivityStatus string
 
 const (
-	StatusPending    ActivityStatus = "Pending"
-	StatusRunning    ActivityStatus = "Running"
-	StatusCompleted  ActivityStatus = "Completed"
-	StatusFailed     ActivityStatus = "Failed"
-	StatusRetrying   ActivityStatus = "Retrying"
-	StatusDeadLetter ActivityStatus = "DeadLetter"
+	StatusPending    ActivityStatus = storage.RecordStatusPending
+	StatusScheduled  ActivityStatus = storage.RecordStatusScheduled
+	StatusRunning    ActivityStatus = storage.RecordStatusRunning
+	StatusWaiting    ActivityStatus = storage.RecordStatusWaiting
+	StatusCompleted  ActivityStatus = storage.RecordStatusCompleted
+	StatusFailed     ActivityStatus = storage.RecordStatusFailed
+	StatusDeadLetter ActivityStatus = storage.RecordStatusDeadLetter
+	StatusCancelled  ActivityStatus = storage.RecordStatusCancelled
 )
+
+// Finished reports whether s is terminal: completed, failed, dead_letter or
+// cancelled.
+func (s ActivityStatus) Finished() bool {
+	switch s {
+	case StatusCompleted, StatusFailed, StatusDeadLetter, StatusCancelled:
+		return true
+	}
+	return false
+}
 
 type ActivityOption struct {
 	Priority             *ActivityPriority

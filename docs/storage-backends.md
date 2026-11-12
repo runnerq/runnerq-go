@@ -92,7 +92,10 @@ heartbeat a running handler's claim and cancel the handler when the claim is
 gone. `storage.SpawnStorage` (`EnqueueForWorker`, `EnqueueIdempotentForWorker`)
 makes handler-issued spawns conditional on the claim, atomically with the
 insert. Without them the engine falls back to lease sizing alone and unfenced
-spawns.
+spawns. `storage.ResultNotifier` (`NotifyResult`) hints that a result was
+stored, across processes; the engine renews a running claim at once on a hint
+for that activity, so a cancel stops the handler without waiting for the next
+heartbeat.
 
 `storage.QueryStorage` is optional too: a general query layer over a
 canonical model of activities and events, for dashboards and tooling (the
@@ -104,7 +107,8 @@ and step listings, and whole trees. Queries span every queue in the database.
 A backend advertises what it evaluates in `QueryCapabilities` and must reject
 anything else with `ErrUnsupported` rather than ignore it.
 
-`storage.CommandStorage` (also optional) applies operator commands to the
+`storage.CommandStorage` (also optional, and what `runnerq.Client`'s
+management commands need) applies operator commands to the
 backend's own queue: cancel (non-terminal work; a running claim is
 fenced out, children are cancelled when asked, and a cancellation error
 result wakes anything awaiting the activity), retry and redrive (from

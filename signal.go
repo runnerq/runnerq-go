@@ -25,9 +25,18 @@ func SignalActivity(ctx context.Context, backend storage.Storage, activityID uui
 	return nil
 }
 
-// Signal is SignalActivity on this engine's backend.
+// Signal is SignalActivity on this engine's backend, traced by its Tracer.
 func (e *WorkerEngine) Signal(ctx context.Context, activityID uuid.UUID, name string, payload json.RawMessage) error {
-	return SignalActivity(ctx, e.backend, activityID, name, payload)
+	ctx, end := startSpan(ctx, e.tel.tracerOf(), SpanSignalSend, "", func() []TraceAttribute {
+		return []TraceAttribute{{AttrActivityID, activityID.String()}, {AttrSignalName, name}}
+	})
+	err := SignalActivity(ctx, e.backend, activityID, name, payload)
+	if err != nil {
+		end(OutcomeError, err)
+	} else {
+		end(OutcomeSent, nil)
+	}
+	return err
 }
 
 // SignalActivityByKey delivers a signal to the activity that owns
@@ -56,9 +65,17 @@ func SignalActivityByKey(ctx context.Context, backend storage.Storage, activityT
 	return SignalActivity(ctx, backend, activityID, name, payload)
 }
 
-// SignalByKey is SignalActivityByKey on this engine's backend.
+// SignalByKey is SignalActivityByKey on this engine's backend, delivered
+// through Signal.
 func (e *WorkerEngine) SignalByKey(ctx context.Context, activityType string, idempotencyKey string, name string, payload json.RawMessage) error {
-	return SignalActivityByKey(ctx, e.backend, activityType, idempotencyKey, name, payload)
+	if name == "" || activityType == "" || idempotencyKey == "" {
+		return SignalActivityByKey(ctx, e.backend, activityType, idempotencyKey, name, payload)
+	}
+	activityID, err := e.backend.LookupIdempotencyActivityID(ctx, storage.BusinessIdempotencyKey(idempotencyKey, activityType))
+	if err != nil {
+		return signalDeliveryError(err)
+	}
+	return e.Signal(ctx, activityID, name, payload)
 }
 
 // signalDeliveryError maps a storage not-found to ErrActivityNotFoundW.

@@ -32,7 +32,7 @@ type Onboarding struct {
 }
 
 func (h *Onboarding) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) (json.RawMessage, error) {
-	if _, err := ctx.RunStep("send-welcome", func(context.Context) (string, error) {
+	if _, err := runnerq.RunStep(ctx, "send-welcome", func(context.Context) (string, error) {
 		fmt.Printf("  ▶ %s  welcome email sent\n", time.Now().Format("15:04:05"))
 		return "welcome", nil
 	}); err != nil {
@@ -45,7 +45,7 @@ func (h *Onboarding) Handle(ctx runnerq.ActivityContext, payload json.RawMessage
 		return nil, err
 	}
 
-	if _, err := ctx.RunStep("send-tips", func(context.Context) (string, error) {
+	if _, err := runnerq.RunStep(ctx, "send-tips", func(context.Context) (string, error) {
 		fmt.Printf("  ▶ %s  tips email sent\n", time.Now().Format("15:04:05"))
 		return "tips", nil
 	}); err != nil {
@@ -84,8 +84,7 @@ func main() {
 		backend.Close()
 	}()
 
-	future, err := engine.GetActivityExecutor().
-		Activity[Onboarding]().
+	future, err := runnerq.Activity[Onboarding](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{"user":"grace"}`)).
 		Execute(ctx)
 	if err != nil {

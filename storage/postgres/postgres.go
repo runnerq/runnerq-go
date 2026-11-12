@@ -307,7 +307,7 @@ func execAll(ctx context.Context, q interface {
 	br := q.SendBatch(ctx, batch)
 	for _, s := range stmts {
 		if _, err := br.Exec(); err != nil {
-			br.Close()
+			_ = br.Close()
 			return databaseError(err, fmt.Sprintf("%s: %v", s.what, err))
 		}
 	}

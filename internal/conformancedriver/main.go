@@ -99,6 +99,16 @@ type args struct {
 	EventsS float64 `json:"events_s"`
 	Batch   int     `json:"batch"`
 
+	CommandID     string               `json:"command_id"`
+	Fingerprint   string               `json:"fingerprint"`
+	IDs           []uuid.UUID          `json:"ids"`
+	Filter        *storage.QueryFilter `json:"filter"`
+	Max           int                  `json:"max"`
+	DryRun        bool                 `json:"dry_run"`
+	Cascade       bool                 `json:"cascade"`
+	ResetAttempts bool                 `json:"reset_attempts"`
+	At            time.Time            `json:"at"`
+
 	Cron         string `json:"cron"`
 	Timezone     string `json:"timezone"`
 	CatchUp      string `json:"catch_up"`
@@ -227,8 +237,42 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 			state = "error"
 		}
 		return map[string]any{"result": map[string]any{"state": state, "data": r.Data, "serialization": r.Serialization}}, nil
+	case "command":
+		return d.command(ctx, a)
 	}
 	return nil, &storage.StorageError{Kind: storage.ErrUnsupported, Message: "unknown op " + op}
+}
+
+func (d *driver) command(ctx context.Context, a args) (any, error) {
+	cmd := storage.Command{
+		ID: a.CommandID, Fingerprint: a.Fingerprint, Kind: storage.CommandKind(a.Kind),
+		Target: storage.CommandTarget{IDs: a.IDs, Filter: a.Filter, Max: a.Max},
+		DryRun: a.DryRun, Reason: a.Reason, CascadeChildren: a.Cascade, ResetAttempts: a.ResetAttempts,
+		At: a.At, SignalName: a.Name, SignalPayload: a.Payload,
+	}
+	if a.Priority != nil {
+		cmd.Priority = storage.ActivityPriority(*a.Priority)
+	}
+	if cmd.Fingerprint == "" {
+		cmd.Fingerprint = storage.CommandFingerprint(cmd)
+	}
+	res, err := d.b.ApplyCommand(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, len(res.Items))
+	for i, it := range res.Items {
+		item := map[string]any{"id": it.ID, "outcome": it.Outcome}
+		if it.Status != "" {
+			item["status"] = it.Status
+		}
+		if it.ErrMessage != "" {
+			item["error"] = kindOf(&storage.StorageError{Kind: it.ErrKind})
+		}
+		items[i] = item
+	}
+	return map[string]any{"matched": res.Matched, "applied": res.Applied, "cascaded": res.Cascaded,
+		"more": res.More, "replayed": res.Replayed, "items": items}, nil
 }
 
 func (d *driver) submit(ctx context.Context, a args) (any, error) {

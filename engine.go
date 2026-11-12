@@ -30,7 +30,8 @@ type WorkerEngine struct {
 	handlers map[string]ActivityHandler
 	config   WorkerConfig
 	running  atomic.Bool
-	metrics  MetricsSink
+	metrics  LabeledMetricsSink
+	tel      *telemetry
 
 	// mu guards the fields below: Start and Stop usually run on different
 	// goroutines, and it makes closing shutdownCh idempotent.
@@ -192,6 +193,10 @@ func NewWorkerEngineWithBackend(backend storage.Storage, config WorkerConfig) *W
 	adapter := newBackendQueueAdapter(backend, config.ActivityTypes)
 	shutdownCh := make(chan struct{})
 	counts := newCountingMetrics(NoopMetrics{})
+	queueName := config.QueueName
+	if n, ok := backend.(interface{ QueueName() string }); ok {
+		queueName = n.QueueName()
+	}
 	return &WorkerEngine{
 		queue:      adapter,
 		backend:    backend,
@@ -200,6 +205,7 @@ func NewWorkerEngineWithBackend(backend storage.Storage, config WorkerConfig) *W
 		shutdownCh: shutdownCh,
 		metrics:    counts,
 		counts:     counts,
+		tel:        &telemetry{queue: queueName},
 		instanceID: uuid.New().String(),
 		hostname:   executor.Hostname(),
 		sdk:        executor.ThisSDK(),
@@ -207,8 +213,15 @@ func NewWorkerEngineWithBackend(backend storage.Storage, config WorkerConfig) *W
 	}
 }
 
-// SetMetrics sets the metrics sink. Panics once the engine is running.
+// SetMetrics sets an unlabeled metrics sink (see UnlabeledMetrics),
+// replacing any sink set before. Panics once the engine is running.
 func (e *WorkerEngine) SetMetrics(sink MetricsSink) {
+	e.SetLabeledMetrics(UnlabeledMetrics(sink))
+}
+
+// SetLabeledMetrics sets the metrics sink, replacing any set before. Panics
+// once the engine is running.
+func (e *WorkerEngine) SetLabeledMetrics(sink LabeledMetricsSink) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.active {
@@ -218,6 +231,18 @@ func (e *WorkerEngine) SetMetrics(sink MetricsSink) {
 		sink = NoopMetrics{}
 	}
 	e.counts.sink = sink
+}
+
+// SetTracer sets the tracer for this engine's attempts and for the
+// activities its executors enqueue; nil turns tracing off. Panics once the
+// engine is running.
+func (e *WorkerEngine) SetTracer(t Tracer) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.active {
+		panic("cannot change the tracer while engine is active")
+	}
+	e.tel.tracer = t
 }
 
 func (e *WorkerEngine) Backend() storage.Storage {
@@ -301,7 +326,7 @@ func isNilHandler(handler ActivityHandler) bool {
 // handler's context it spawns children of that handler's activity instead
 // (see ActivityExecutor).
 func (e *WorkerEngine) GetActivityExecutor() *ActivityExecutor {
-	return newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce)
+	return newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce, e.tel)
 }
 
 // Start runs the engine until ctx ends, Stop is called or the process gets
@@ -329,6 +354,10 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 			e.mu.Unlock()
 			return &WorkerError{Kind: ErrConfiguration, Message: fmt.Sprintf("no handler registered for activity type %q", t)}
 		}
+	}
+	if e.config.GaugeInterval < 0 {
+		e.mu.Unlock()
+		return &WorkerError{Kind: ErrConfiguration, Message: "gauge interval must be non-negative"}
 	}
 	if r := e.config.Retention; r != nil && (r.Completed < 0 || r.Failed < 0 || r.Interval < 0 || r.BatchSize < 0) {
 		e.mu.Unlock()
@@ -368,7 +397,7 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 		e.mu.Unlock()
 		return err
 	}
-	slog.Info("Starting worker engine", "max_concurrent_activities", e.config.MaxConcurrentActivities)
+	slog.Info("Starting worker engine", "queue", e.tel.queueName(), "max_concurrent_activities", e.config.MaxConcurrentActivities)
 	for _, o := range observers {
 		o.ExecutorStarted(e)
 		defer o.ExecutorStopped(e.instanceID)
@@ -391,6 +420,12 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	if store, ok := e.backend.(storage.ScheduleStorage); ok {
 		wg.Go(func() {
 			e.runScheduleFirer(intakeCtx, store)
+		})
+	}
+
+	if interval := e.config.GaugeInterval; interval > 0 {
+		wg.Go(func() {
+			e.runGaugeSampler(intakeCtx, interval, types)
 		})
 	}
 
@@ -470,7 +505,7 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	}
 
 	signal.Stop(sigCh)
-	slog.Info("Worker engine stopped")
+	slog.Info("Worker engine stopped", "queue", e.tel.queueName())
 	return nil
 }
 
@@ -624,8 +659,23 @@ func pauseAfterDequeueError(ctx context.Context) bool {
 }
 
 func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, workerLabel string, workerID int) {
+	started := time.Now()
+	labels := e.tel.labels(act.ActivityType)
+	stored := act.Metadata[MetadataTraceparent]
+	ctx, endSpan := startSpan(ctx, e.tel.tracerOf(), SpanAttempt, stored, func() []TraceAttribute {
+		return append(e.tel.activityAttrs(act), attemptAttr(act.RetryCount+1))
+	})
+	outcome, err := e.runAttempt(ctx, act, stored, workerLabel, workerID)
+	endSpan(outcome, err)
+	e.metrics.RecordHistogram(MetricActivityExecution, seconds(time.Since(started)), labels)
+}
+
+// runAttempt runs one attempt and records its outcome; it returns the
+// outcome (an Outcome* constant) and the error behind it, for the span.
+func (e *WorkerEngine) runAttempt(ctx context.Context, act *activity, traceparent, workerLabel string, workerID int) (string, error) {
 	activityID := act.ID
 	activityType := act.ActivityType
+	labels := e.tel.labels(activityType)
 
 	slog.Debug("Worker processing activity", "worker_id", workerID, "activity_id", activityID, "activity_type", activityType)
 
@@ -635,7 +685,7 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 		if _, err := e.queue.MarkFailed(ctx, act, "handler_not_found", true, workerLabel); err != nil {
 			slog.Error("Failed to mark activity as failed", "worker_id", workerID, "activity_id", activityID, "error", err)
 		}
-		return
+		return OutcomeError, fmt.Errorf("no handler registered for activity type %q", activityType)
 	}
 
 	activityTimeout := time.Duration(act.TimeoutSeconds) * time.Second
@@ -650,8 +700,8 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 	e.inflight.Store(activityID, &running{InFlightActivity{
 		ID: activityID, Type: activityType, Attempt: int(act.RetryCount) + 1, StartedAt: now,
 	}, revoke})
-	e.metrics.IncCounter(metricStarted, 1)
-	e.metrics.ObserveDuration(metricClaimLag, claimLag(act, now))
+	e.metrics.AddCounter(MetricActivityStarted, 1, labels)
+	e.metrics.RecordHistogram(MetricActivityClaimLag, seconds(claimLag(act, now)), labels)
 	e.changes.Notify()
 	e.announce.change(executor.AttemptStarted, act, now)
 	defer func() {
@@ -660,10 +710,13 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 	}()
 	// The attempt queue on the context lets in-handler GetResult calls
 	// yield-park this activity.
-	attemptQ := &attemptQueue{activityQueue: e.queue, backend: e.backend, owner: act.ID, worker: workerLabel, persistenceCtx: ctx, metrics: e.metrics, awaitGrace: e.awaitGrace}
-	scopedExecutor := newActivityExecutor(attemptQ, e.config.MaxActivityDepth, e.announce).scopedForChild(act)
+	attemptQ := &attemptQueue{activityQueue: e.queue, backend: e.backend, owner: act.ID, worker: workerLabel, persistenceCtx: ctx, metrics: e.metrics, labels: labels, awaitGrace: e.awaitGrace}
+	scopedExecutor := newActivityExecutor(attemptQ, e.config.MaxActivityDepth, e.announce, e.tel).scopedForChild(act)
 	timeoutCtx = context.WithValue(timeoutCtx, attemptQueueKey{}, attemptQ)
 	timeoutCtx = context.WithValue(timeoutCtx, childScopeKey{}, scopedExecutor)
+	if traceparent != "" {
+		timeoutCtx = context.WithValue(timeoutCtx, traceparentKey{}, traceparent)
+	}
 
 	actCtx := ActivityContext{
 		ActivityID:       activityID,
@@ -676,6 +729,7 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 		RootActivityID:   act.RootActivityID,
 		Depth:            act.Depth,
 		queue:            attemptQ,
+		tracer:           e.tel.tracerOf(),
 	}
 
 	payloadForDL := make(json.RawMessage, len(act.Payload))
@@ -689,9 +743,9 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 	// belongs to a superseded attempt, and the fence would reject its ack.
 	if cause := context.Cause(timeoutCtx); cause != nil {
 		if se, ok := storage.IsStorageError(cause); ok && se.Kind == storage.ErrClaimLost {
-			e.metrics.IncCounter(metricClaimLost, 1)
+			e.metrics.AddCounter(MetricActivityClaimLost, 1, labels)
 			slog.Warn("Activity execution lost its claim; handler was cancelled", "worker_id", workerID, "activity_id", activityID, "activity_type", activityType, "error", cause)
-			return
+			return OutcomeClaimLost, nil
 		}
 	}
 
@@ -699,31 +753,27 @@ func (e *WorkerEngine) processActivity(ctx context.Context, act *activity, worke
 	// the timeout so a yield that raced the deadline is still a yield.
 	var ys *yieldPark
 	if errors.As(handlerErr, &ys) {
-		e.handleYield(ctx, act, ys, workerLabel, workerID)
-		return
+		return e.handleYield(ctx, act, ys, workerLabel, workerID)
 	}
 
 	// A returned result is persisted even if the deadline passed during
 	// checkpoint recovery; ownership still fences it.
 	if handlerErr == nil {
-		e.handleSuccess(ctx, act, result, workerLabel, workerID)
-		return
+		return e.handleSuccess(ctx, act, result, workerLabel, workerID)
 	}
 	if se, ok := storage.IsStorageError(handlerErr); ok && se.Kind == storage.ErrClaimLost {
-		e.metrics.IncCounter(metricClaimLost, 1)
-		slog.Warn("Activity execution lost its claim", "activity_id", activityID, "error", handlerErr)
-		return
+		e.metrics.AddCounter(MetricActivityClaimLost, 1, labels)
+		slog.Warn("Activity execution lost its claim", "activity_id", activityID, "activity_type", activityType, "error", handlerErr)
+		return OutcomeClaimLost, nil
 	}
 	retryable := retryableError(handlerErr)
 	if !retryable {
-		e.handleNonRetryableFailure(ctx, act, handlerErr.Error(), workerLabel, workerID)
-		return
+		return e.handleNonRetryableFailure(ctx, act, handlerErr, workerLabel, workerID)
 	}
 	if timeoutCtx.Err() == context.DeadlineExceeded {
-		e.handleTimeout(ctx, act, handler, payloadForDL, workerLabel, workerID, activityTimeout)
-		return
+		return e.handleTimeout(ctx, act, handler, payloadForDL, workerLabel, workerID, activityTimeout)
 	}
-	e.handleRetryableFailure(ctx, act, handler, payloadForDL, handlerErr.Error(), workerLabel, workerID)
+	return e.handleRetryableFailure(ctx, act, handler, payloadForDL, handlerErr, workerLabel, workerID)
 }
 
 // safeHandle turns a handler panic into a retryable error.
@@ -743,37 +793,41 @@ func (e *WorkerEngine) safeHandle(handler ActivityHandler, ctx ActivityContext, 
 	return handler.Handle(ctx, payload)
 }
 
-func (e *WorkerEngine) handleSuccess(ctx context.Context, act *activity, result json.RawMessage, workerLabel string, workerID int) {
+func (e *WorkerEngine) handleSuccess(ctx context.Context, act *activity, result json.RawMessage, workerLabel string, workerID int) (string, error) {
 	activityID, activityType := act.ID, act.ActivityType
+	labels := e.tel.labels(activityType)
 	started := time.Now()
-	e.metrics.IncCounter("activity_completion_pending_started", 1)
+	e.metrics.AddCounter(MetricActivityCompletionPendingStarted, 1, labels)
 	defer func() {
-		e.metrics.IncCounter("activity_completion_pending_finished", 1)
-		e.metrics.ObserveDuration("activity_completion_persistence", time.Since(started))
+		e.metrics.AddCounter(MetricActivityCompletionPendingFinished, 1, labels)
+		e.metrics.RecordHistogram(MetricActivityCompletionPersistence, seconds(time.Since(started)), labels)
 	}()
 	attemptQ := &attemptQueue{backend: e.backend, owner: act.ID, worker: workerLabel}
-	err := retryStorage(ctx, "complete activity", e.metrics, attemptQ.renew, func(ctx context.Context) error {
+	err := retryStorage(ctx, "complete activity", e.metrics, labels, attemptQ.renew, func(ctx context.Context) error {
 		return e.queue.MarkCompleted(ctx, act, result, workerLabel)
 	})
 	if err != nil {
-		counter := "activity_completion_error"
 		if se, ok := storage.IsStorageError(err); ok && se.Kind == storage.ErrClaimLost {
-			counter = metricClaimLost
+			e.metrics.AddCounter(MetricActivityClaimLost, 1, labels)
+			slog.Warn("Activity execution lost its claim", "activity_id", activityID, "activity_type", activityType, "error", err)
+			return OutcomeClaimLost, nil
 		}
-		e.metrics.IncCounter(counter, 1)
+		e.metrics.AddCounter(MetricActivityCompletionError, 1, labels)
 		slog.Error("Failed to confirm activity completion", "worker_id", workerID, "activity_id", activityID, "activity_type", activityType, "error", err)
-		return
+		return OutcomeError, err
 	}
-	e.metrics.IncCounter(metricCompleted, 1)
+	e.metrics.AddCounter(MetricActivityCompleted, 1, labels)
 	e.announce.change(executor.AttemptSucceeded, act, time.Now().UTC())
 	slog.Info("Activity completed successfully", "worker_id", workerID, "activity_id", activityID, "activity_type", activityType)
+	return OutcomeCompleted, nil
 }
 
 // handleYield parks the activity until its wake time. If that fails the row
 // stays processing until its lease expires and the reaper requeues it: one
 // consumed retry and some latency, not lost work.
-func (e *WorkerEngine) handleYield(ctx context.Context, act *activity, ys *yieldPark, workerLabel string, workerID int) {
+func (e *WorkerEngine) handleYield(ctx context.Context, act *activity, ys *yieldPark, workerLabel string, workerID int) (string, error) {
 	activityID, activityType := act.ID, act.ActivityType
+	labels := e.tel.labels(activityType)
 	// Waits with a recheck replay at least every minute, even if this process
 	// dies right after the park: the checkpointed deadline is unchanged, the
 	// replay just finds a result or reparks.
@@ -784,7 +838,7 @@ func (e *WorkerEngine) handleYield(ctx context.Context, act *activity, ys *yield
 		}
 	}
 	attemptQ := &attemptQueue{backend: e.backend, owner: act.ID, worker: workerLabel}
-	err := retryStorage(ctx, "park activity", e.metrics, attemptQ.renew, func(ctx context.Context) error {
+	err := retryStorage(ctx, "park activity", e.metrics, labels, attemptQ.renew, func(ctx context.Context) error {
 		if b, ok := e.backend.(storage.DependencyStorage); ok && ys.recheck != uuid.Nil {
 			var producer *uuid.UUID
 			if ys.kind == "await" {
@@ -796,9 +850,9 @@ func (e *WorkerEngine) handleYield(ctx context.Context, act *activity, ys *yield
 	})
 	if err != nil {
 		slog.Error("Failed to confirm durable park", "activity_id", activityID, "error", err)
-		return
+		return OutcomeError, err
 	}
-	e.metrics.IncCounter("activity_yielded", 1)
+	e.metrics.AddCounter(MetricActivityYielded, 1, labels)
 	slog.Debug("Activity yielded for durable wait",
 		"worker_id", workerID, "activity_id", activityID, "activity_type", activityType,
 		"step", ys.step, "wake_at", ys.wakeAt)
@@ -809,65 +863,73 @@ func (e *WorkerEngine) handleYield(ctx context.Context, act *activity, ys *yield
 	// the race in YieldForResult; otherwise a failure here costs at most the
 	// one-minute replay above.
 	if ys.recheck == uuid.Nil {
-		return
+		return OutcomeYielded, nil
 	}
 	if _, durable := e.backend.(storage.DependencyStorage); durable {
-		return
+		return OutcomeYielded, nil
 	}
 	res, err := e.queue.GetResult(ctx, ys.recheck)
 	if err != nil {
 		slog.Warn("Post-park recheck failed; the park deadline will recover",
 			"activity_id", activityID, "error", err)
-		return
+		return OutcomeYielded, nil
 	}
 	if res == nil {
-		return
+		return OutcomeYielded, nil
 	}
 	if _, err := e.backend.WakeWaiting(ctx, act.ID); err != nil {
 		slog.Warn("Post-park self-wake failed; the park deadline will recover",
 			"activity_id", activityID, "error", err)
 	}
+	return OutcomeYielded, nil
 }
 
-func (e *WorkerEngine) handleRetryableFailure(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, reason string, workerLabel string, workerID int) {
-	e.metrics.IncCounter(metricRetried, 1)
+func (e *WorkerEngine) handleRetryableFailure(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, cause error, workerLabel string, workerID int) (string, error) {
+	reason := cause.Error()
+	e.metrics.AddCounter(MetricActivityRetry, 1, e.tel.labels(act.ActivityType))
 	slog.Warn("Activity requesting retry", "worker_id", workerID, "activity_id", act.ID, "activity_type", act.ActivityType, "reason", reason)
-	e.retryOrDeadLetter(ctx, act, handler, payload, reason, workerLabel, workerID)
+	return e.retryOrDeadLetter(ctx, act, handler, payload, reason, cause, OutcomeRetry, workerLabel, workerID)
 }
 
 // retryOrDeadLetter records a retryable failure and, when it was the last
 // attempt, runs the handler's dead-letter hook.
-func (e *WorkerEngine) retryOrDeadLetter(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, reason string, workerLabel string, workerID int) {
+func (e *WorkerEngine) retryOrDeadLetter(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, reason string, cause error, outcome string, workerLabel string, workerID int) (string, error) {
 	deadLettered, err := e.persistFailure(ctx, act, reason, true, workerLabel)
 	if err != nil {
 		slog.Error("Failed to record activity failure", "worker_id", workerID, "activity_id", act.ID, "error", err)
-		return
+		return OutcomeError, err
 	}
 	if deadLettered {
 		e.callDeadLetter(ctx, act, handler, payload, reason)
+		return OutcomeDeadLetter, cause
 	}
+	return outcome, cause
 }
 
-func (e *WorkerEngine) handleNonRetryableFailure(ctx context.Context, act *activity, reason string, workerLabel string, workerID int) {
-	e.metrics.IncCounter(metricFailed, 1)
+func (e *WorkerEngine) handleNonRetryableFailure(ctx context.Context, act *activity, cause error, workerLabel string, workerID int) (string, error) {
+	reason := cause.Error()
+	e.metrics.AddCounter(MetricActivityFailedNonRetry, 1, e.tel.labels(act.ActivityType))
 	slog.Error("Activity failed", "worker_id", workerID, "activity_id", act.ID, "activity_type", act.ActivityType, "reason", reason)
 	// The backend writes the error result in the same transaction.
 	if _, err := e.persistFailure(ctx, act, reason, false, workerLabel); err != nil {
 		slog.Error("Failed to record activity failure", "worker_id", workerID, "activity_id", act.ID, "error", err)
+		return OutcomeError, err
 	}
+	return OutcomeFailed, cause
 }
 
-func (e *WorkerEngine) handleTimeout(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, workerLabel string, workerID int, timeout time.Duration) {
-	e.metrics.IncCounter(metricTimedOut, 1)
+func (e *WorkerEngine) handleTimeout(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, workerLabel string, workerID int, timeout time.Duration) (string, error) {
+	e.metrics.AddCounter(MetricActivityTimeout, 1, e.tel.labels(act.ActivityType))
 	slog.Error("Activity timed out", "worker_id", workerID, "activity_id", act.ID, "activity_type", act.ActivityType, "timeout", timeout)
-	e.retryOrDeadLetter(ctx, act, handler, payload, "Activity execution timed out", workerLabel, workerID)
+	const reason = "Activity execution timed out"
+	return e.retryOrDeadLetter(ctx, act, handler, payload, reason, errors.New(reason), OutcomeTimeout, workerLabel, workerID)
 }
 
 // callDeadLetter runs the handler's dead-letter hook, recovering a panic.
 func (e *WorkerEngine) callDeadLetter(ctx context.Context, act *activity, handler ActivityHandler, payload json.RawMessage, reason string) {
 	defer func() {
 		if r := recover(); r != nil {
-			e.metrics.IncCounter("activity_dead_letter_hook_panic", 1)
+			e.metrics.AddCounter(MetricActivityDeadLetterHookPanic, 1, e.tel.labels(act.ActivityType))
 			slog.Error("Dead-letter hook panicked", "activity_id", act.ID, "panic", r)
 		}
 	}()
@@ -877,7 +939,7 @@ func (e *WorkerEngine) callDeadLetter(ctx context.Context, act *activity, handle
 		RetryCount:       0,
 		Metadata:         make(map[string]string),
 		Ctx:              ctx,
-		ActivityExecutor: newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce).scopedForChild(act),
+		ActivityExecutor: newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce, e.tel).scopedForChild(act),
 		ParentActivityID: act.ParentActivityID,
 		RootActivityID:   act.RootActivityID,
 		Depth:            act.Depth,
@@ -969,7 +1031,7 @@ func (e *WorkerEngine) runRetentionProcessor(ctx context.Context) {
 					break
 				}
 				if n > 0 {
-					e.metrics.IncCounter("activity_trees_swept", n)
+					e.metrics.AddCounter(MetricActivityTreesSwept, n, MetricLabels{Queue: e.tel.queueName()})
 					slog.Debug("Retention sweep deleted workflow trees", "trees", n)
 				}
 				if int(n) < batchSize {
@@ -986,7 +1048,9 @@ type WorkerEngineBuilder struct {
 	queueName     *string
 	maxWorkers    *int
 	pollInterval  *time.Duration
-	metrics       MetricsSink
+	metrics       LabeledMetricsSink
+	tracer        Tracer
+	gaugeInterval time.Duration
 	backend       storage.Storage
 	activityTypes []string
 	shutdownGrace *time.Duration
@@ -1024,8 +1088,33 @@ func (b *WorkerEngineBuilder) ActivityTypes(types []string) *WorkerEngineBuilder
 	return b
 }
 
+// Metrics sets an unlabeled metrics sink (see UnlabeledMetrics), replacing
+// one set by LabeledMetrics.
 func (b *WorkerEngineBuilder) Metrics(sink MetricsSink) *WorkerEngineBuilder {
+	b.metrics = UnlabeledMetrics(sink)
+	return b
+}
+
+// LabeledMetrics sets the metrics sink, replacing one set by Metrics. The
+// module github.com/runnerq/runnerq-go/otel provides one for OpenTelemetry.
+func (b *WorkerEngineBuilder) LabeledMetrics(sink LabeledMetricsSink) *WorkerEngineBuilder {
 	b.metrics = sink
+	return b
+}
+
+// Tracer sets the tracer for attempts and for the activities the engine's
+// executors enqueue (see Tracer).
+func (b *WorkerEngineBuilder) Tracer(t Tracer) *WorkerEngineBuilder {
+	b.tracer = t
+	return b
+}
+
+// GaugeInterval turns on the gauges (queue depth by status, oldest pending
+// age, in-flight count), sampled about every d (jittered by up to a fifth).
+// Queue depth and age need a backend that implements storage.QueryStorage
+// and cost one aggregate and one single-row query per sample. Off by default.
+func (b *WorkerEngineBuilder) GaugeInterval(d time.Duration) *WorkerEngineBuilder {
+	b.gaugeInterval = d
 	return b
 }
 
@@ -1070,6 +1159,7 @@ func (b *WorkerEngineBuilder) Build() (*WorkerEngine, error) {
 	config.SchedulePollIntervalSeconds = &pollIntervalSec
 	config.ActivityTypes = b.activityTypes
 	config.Retention = b.retention
+	config.GaugeInterval = b.gaugeInterval
 	if b.shutdownGrace != nil {
 		secs := max(uint64(b.shutdownGrace.Seconds()), 1)
 		config.ShutdownGraceSeconds = &secs
@@ -1077,8 +1167,9 @@ func (b *WorkerEngineBuilder) Build() (*WorkerEngine, error) {
 
 	engine := NewWorkerEngineWithBackend(b.backend, config)
 	if b.metrics != nil {
-		engine.SetMetrics(b.metrics)
+		engine.SetLabeledMetrics(b.metrics)
 	}
+	engine.SetTracer(b.tracer)
 	return engine, nil
 }
 
@@ -1086,13 +1177,14 @@ func (b *WorkerEngineBuilder) Build() (*WorkerEngine, error) {
 // backend recognises one that already committed.
 func (e *WorkerEngine) persistFailure(ctx context.Context, act *activity, reason string, retryable bool, worker string) (dead bool, err error) {
 	q := &attemptQueue{backend: e.backend, owner: act.ID, worker: worker}
-	err = retryStorage(ctx, "record activity failure", e.metrics, q.renew, func(ctx context.Context) error {
+	labels := e.tel.labels(act.ActivityType)
+	err = retryStorage(ctx, "record activity failure", e.metrics, labels, q.renew, func(ctx context.Context) error {
 		var err error
 		dead, err = e.queue.MarkFailed(ctx, act, reason, retryable, worker)
 		return err
 	})
 	if err == nil && dead {
-		e.metrics.IncCounter(metricDeadLettered, 1)
+		e.metrics.AddCounter(MetricActivityDeadLettered, 1, labels)
 	}
 	return
 }
