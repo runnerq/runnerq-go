@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -106,7 +107,7 @@ func TestEnginesFireEachTickOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(context.Background(), `SELECT id, idempotency_key, status FROM runnerq_activities WHERE queue_name = $1 ORDER BY idempotency_key`, queue)
+	rows, err := conn.Query(context.Background(), `SELECT id, idempotency_key, status FROM runnerq_activities WHERE queue_name = $1`, queue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +128,7 @@ func TestEnginesFireEachTickOnce(t *testing.T) {
 			t.Errorf("fire %s: status %s, ran %d times", at, status, runs[id.String()])
 		}
 	}
+	slices.SortFunc(fires, time.Time.Compare)
 	if len(fires) < 3 {
 		t.Fatalf("only %d fires", len(fires))
 	}
