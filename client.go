@@ -17,7 +17,7 @@ import (
 // bound to the engine.
 //
 //	client := runnerq.NewClient(backend)
-//	fut, _ := client.Activity[SendEmail]().Payload(p).Execute(ctx)
+//	fut, _ := runnerq.Activity[SendEmail](client).Payload(p).Execute(ctx)
 //	res, _ := client.Cancel(ctx, runnerq.IDs(fut.ActivityID()))
 //
 // Management commands (Cancel, Retry, RunNow, Reschedule, SetPriority,
@@ -35,7 +35,7 @@ type Client struct {
 func NewClient(backend storage.Storage) *Client {
 	return &Client{
 		backend: backend,
-		exec:    newActivityExecutor(newBackendQueueAdapter(backend, nil), DefaultMaxActivityDepth, &announcer{}),
+		exec:    newActivityExecutor(newBackendQueueAdapter(backend, nil), DefaultMaxActivityDepth, &announcer{}, nil),
 		queue:   queueOf(backend),
 	}
 }
@@ -62,13 +62,6 @@ func queueOf(backend storage.Storage) string {
 
 // Backend is the client's backend.
 func (c *Client) Backend() storage.Storage { return c.backend }
-
-// Activity starts a submission of the activity served by handler type T:
-//
-//	fut, err := client.Activity[ResizeImage]().Payload(p).Execute(ctx)
-func (c *Client) Activity[T any]() *ActivityBuilder {
-	return c.exec.ActivityNamed(NameOf[T]())
-}
 
 // ActivityNamed starts a submission of activityType by name.
 func (c *Client) ActivityNamed(activityType string) *ActivityBuilder {

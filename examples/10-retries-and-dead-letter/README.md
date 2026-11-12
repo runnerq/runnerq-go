@@ -41,7 +41,7 @@ func (h *ChargeCard) OnDeadLetter(ctx runnerq.ActivityContext, p json.RawMessage
     alertOnCall(ctx.ActivityID, errorMsg)   // compensate / refund / flag
 }
 
-executor.Activity[ChargeCard]().MaxRetries(2).Payload(p).Execute(ctx)
+runnerq.Activity[ChargeCard](executor).MaxRetries(2).Payload(p).Execute(ctx)
 ```
 
 `NewNonRetryError` skips retries and dead-letters immediately. Embed

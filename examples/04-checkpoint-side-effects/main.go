@@ -44,7 +44,7 @@ func (h *BillingRun) Handle(ctx runnerq.ActivityContext, payload json.RawMessage
 	fmt.Printf("billing_run attempt #%d\n", ctx.RetryCount)
 
 	// Charge once. Memoized on every retry after the first success.
-	receipt, err := ctx.RunStep("charge-credits", func(context.Context) (Receipt, error) {
+	receipt, err := runnerq.RunStep(ctx, "charge-credits", func(context.Context) (Receipt, error) {
 		n := chargeRuns.Add(1)
 		fmt.Printf("  ▶ charge-credits EXECUTING (run #%d) — real money moves here\n", n)
 		return Receipt{ChargeID: "ch_42"}, nil
@@ -56,7 +56,7 @@ func (h *BillingRun) Handle(ctx runnerq.ActivityContext, payload json.RawMessage
 	// Send the batch. Fails transiently on the first two attempts; RunStep
 	// does not checkpoint retryable failures, so this step re-runs while the
 	// charge above stays memoized.
-	delivered, err := ctx.RunStep("send-batch", func(context.Context) (int, error) {
+	delivered, err := runnerq.RunStep(ctx, "send-batch", func(context.Context) (int, error) {
 		n := sendRuns.Add(1)
 		fmt.Printf("  ▶ send-batch EXECUTING (run #%d)\n", n)
 		if n < 3 {
@@ -101,8 +101,7 @@ func main() {
 		backend.Close()
 	}()
 
-	future, err := engine.GetActivityExecutor().
-		Activity[BillingRun]().
+	future, err := runnerq.Activity[BillingRun](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{"campaign":"june"}`)).
 		Execute(ctx)
 	if err != nil {

@@ -19,14 +19,14 @@ resumes from where it left off without redoing completed work.
 func (h *Checkout) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) (json.RawMessage, error) {
     // Each step is checkpointed. Crash after the charge is recorded and
     // restart — it isn't repeated; the workflow resumes at shipping.
-    receipt, err := ctx.RunStep("charge-card", func(c context.Context) (Receipt, error) {
+    receipt, err := runnerq.RunStep(ctx, "charge-card", func(c context.Context) (Receipt, error) {
         return chargeCard(c, payload)   // at most once per recorded success
     })
     if err != nil {
         return nil, err
     }
 
-    ship, err := ctx.ActivityExecutor.Activity[Ship]().Step("ship").Payload(payload).Execute(ctx.Ctx)
+    ship, err := runnerq.Activity[Ship](ctx.ActivityExecutor).Step("ship").Payload(payload).Execute(ctx.Ctx)
     if err != nil {
         return nil, err
     }
@@ -49,8 +49,13 @@ func (h *Checkout) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) 
 go get github.com/runnerq/runnerq-go@main
 ```
 
-Requires Go 1.27. The API in this README is on `main` and not in a tagged
-release yet. The latest release, v0.5.1, has the older
+Requires Go 1.25 or later. The generic helpers are package functions,
+`runnerq.RunStep(ctx, name, fn)` and `runnerq.Activity[T](exec)`; on Go 1.27
+and later they are also methods (`ctx.RunStep(name, fn)`,
+`exec.Activity[T]()`), the same calls in another spelling.
+
+The API in this README is on `main` and not in a tagged release yet; see
+[CHANGELOG.md](CHANGELOG.md). The latest release, v0.5.1, has the older
 [named-activity API](https://github.com/runnerq/runnerq-go/tree/v0.5.1#readme)
 and the old module path, `github.com/alob-mtc/runnerq-go`. To move to this
 one, rewrite your imports:
@@ -77,7 +82,7 @@ import (
 type Greeting struct{ runnerq.DefaultDeadLetterHandler }
 
 func (h *Greeting) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) (json.RawMessage, error) {
-    greeting, err := ctx.RunStep("compose", func(context.Context) (string, error) {
+    greeting, err := runnerq.RunStep(ctx, "compose", func(context.Context) (string, error) {
         var name string
         if err := json.Unmarshal(payload, &name); err != nil {
             return "", runnerq.NewNonRetryError(err.Error())
@@ -106,8 +111,7 @@ func main() {
     engine.RegisterActivity(&Greeting{}) // serves activity type "Greeting"
     go engine.Start(ctx)
 
-    future, _ := engine.GetActivityExecutor().
-        Activity[Greeting]().
+    future, _ := runnerq.Activity[Greeting](engine.GetActivityExecutor()).
         Payload(json.RawMessage(`"world"`)).
         Execute(ctx)
 
@@ -151,12 +155,12 @@ workers. The [examples](#examples) cover each of these.
 <details open>
 <summary><strong>Durable workflows that survive crashes</strong></summary>
 
-A handler that calls `ctx.RunStep` is a durable workflow. Each step's result
+A handler that calls `runnerq.RunStep` is a durable workflow. Each step's result
 is checkpointed; if the process dies, the handler replays and completed steps
 return their stored results instead of re-executing.
 
 ```go
-receipt, err := ctx.RunStep("charge-card", func(c context.Context) (Receipt, error) {
+receipt, err := runnerq.RunStep(ctx, "charge-card", func(c context.Context) (Receipt, error) {
     return chargeCard(c, payload)   // at most once per recorded success
 })
 ```
@@ -172,7 +176,7 @@ await children **park** in storage — no goroutine, no lease, no retry
 burned while they wait.
 
 ```go
-fut, _ := ctx.ActivityExecutor.Activity[Reserve]().Step("reserve").Payload(p).Execute(ctx.Ctx)
+fut, _ := runnerq.Activity[Reserve](ctx.ActivityExecutor).Step("reserve").Payload(p).Execute(ctx.Ctx)
 reserved, _ := fut.GetResult(ctx.Ctx)   // memoized on replay
 ```
 
@@ -318,7 +322,7 @@ Full reference in [`docs/`](docs/):
 - [Retries & Dead Letter](docs/retries-and-dead-letter.md)
 - [Configuration](docs/configuration.md) — tuning, scheduling, workload isolation, retention
 - [Managing work](docs/managing-work.md) — the client: cancel, retry, reschedule, run now, list
-- [Observability](docs/observability.md) — reading activities from code, worker snapshots, metrics
+- [Observability](docs/observability.md) — reading activities from code, worker snapshots, labelled metrics and gauges, tracing (OpenTelemetry in `otel/`)
 - [Conductor agent](docs/conductor.md) — connecting workers to a console
 - [Storage Backends](docs/storage-backends.md)
 

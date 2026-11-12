@@ -17,7 +17,7 @@ cancels that handler's activity.
 ## Submitting, signalling, awaiting
 
 ```go
-fut, err := client.Activity[SendInvoice]().Payload(p).Execute(ctx)
+fut, err := runnerq.Activity[SendInvoice](client).Payload(p).Execute(ctx)
 err = client.Signal(ctx, fut.ActivityID(), "approved", json.RawMessage(`{"by":"ops"}`))
 result, err := client.Result(ctx, fut.ActivityID())
 ```

@@ -265,7 +265,7 @@ func (a *Agent) isClosing() bool {
 
 // jitter spreads d uniformly over [d/2, 3d/2).
 func jitter(d time.Duration) time.Duration {
-	return d/2 + rand.N(d)
+	return d/2 + rand.N(d) // #nosec G404 -- reconnect jitter, not a secret
 }
 
 func (a *Agent) session(ctx context.Context) error {
@@ -405,7 +405,7 @@ func (a *Agent) pingLoop(ctx context.Context, conn *websocket.Conn) {
 			err := conn.Ping(pctx)
 			cancel()
 			if err != nil && ctx.Err() == nil {
-				conn.CloseNow()
+				_ = conn.CloseNow()
 				return
 			}
 		}

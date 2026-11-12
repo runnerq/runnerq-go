@@ -25,7 +25,8 @@ type attemptQueue struct {
 	owner          uuid.UUID
 	worker         string
 	persistenceCtx context.Context
-	metrics        MetricsSink
+	metrics        LabeledMetricsSink
+	labels         MetricLabels
 	awaitGrace     time.Duration // overrides awaitParkGrace when set
 }
 
@@ -110,7 +111,7 @@ func (q *attemptQueue) heartbeat(ctx context.Context, interval time.Duration, re
 				revoke(err)
 				return
 			}
-			metrics.IncCounter(metricHeartbeatFailed, 1)
+			metrics.AddCounter(MetricActivityHeartbeatFailed, 1, q.labels)
 			slog.Warn("Could not renew activity claim; retrying on the next heartbeat", "activity_id", q.owner, "error", err)
 		}
 		timer.Reset(interval)
@@ -164,7 +165,7 @@ func (q *attemptQueue) WaitForResult(ctx context.Context, id uuid.UUID) (out *ac
 }
 
 func (q *attemptQueue) StoreResult(_ context.Context, id, owner uuid.UUID, result activityResult, step string) error {
-	return retryStorage(q.persistenceCtx, "persist checkpoint", q.metrics, q.renew, func(ctx context.Context) error {
+	return retryStorage(q.persistenceCtx, "persist checkpoint", q.metrics, q.labels, q.renew, func(ctx context.Context) error {
 		if b, ok := q.backend.(storage.CheckpointStorage); ok {
 			return b.StoreCheckpoint(ctx, id, owner, q.worker, storage.ActivityResult{Data: result.Data, State: storage.ResultState(result.State)}, step)
 		}
@@ -174,7 +175,7 @@ func (q *attemptQueue) StoreResult(_ context.Context, id, owner uuid.UUID, resul
 
 func (q *attemptQueue) registerFuture(ctx context.Context, id uuid.UUID) error {
 	if b, ok := q.backend.(storage.DependencyStorage); ok {
-		return retryStorage(ctx, "register result dependency", q.metrics, q.renew, func(ctx context.Context) error {
+		return retryStorage(ctx, "register result dependency", q.metrics, q.labels, q.renew, func(ctx context.Context) error {
 			return b.RegisterDependency(ctx, q.owner, id, q.worker)
 		})
 	}
@@ -192,7 +193,7 @@ func (q *attemptQueue) retryRead(ctx context.Context, operation string, fn func(
 		}
 		return err
 	}
-	return retryStorage(ctx, operation, q.metrics, renew, func(ctx context.Context) error {
+	return retryStorage(ctx, operation, q.metrics, q.labels, renew, func(ctx context.Context) error {
 		if lost != nil {
 			return lost
 		}

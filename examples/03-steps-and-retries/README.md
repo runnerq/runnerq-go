@@ -40,8 +40,7 @@ process_order attempt #1
 ```go
 // .Step("reserve") derives an idempotency key from (root, parent, "reserve").
 // On the parent's retry, this exact spawn reattaches to the existing child.
-fut, _ := ctx.ActivityExecutor.
-    Activity[ReserveInventory]().
+fut, _ := runnerq.Activity[ReserveInventory](ctx.ActivityExecutor).
     Step("reserve").
     Payload(payload).
     Execute(ctx.Ctx)
