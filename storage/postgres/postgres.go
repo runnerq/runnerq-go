@@ -32,6 +32,8 @@ type PostgresBackend struct {
 	sig       *signaler
 	watcherMu sync.Mutex
 	watch     *watcher
+
+	limits limitCache
 }
 
 // New creates a backend with pool size 25 and a 60s lease, creating or
@@ -556,6 +558,8 @@ const (
 	dequeueSQLAllTypes  = dequeueSQLHead + dequeueSQLTail
 	dequeueSQLOneType   = dequeueSQLHead + ` AND activity_type = $4` + dequeueSQLTail
 	dequeueSQLManyTypes = dequeueSQLHead + ` AND activity_type = ANY($4)` + dequeueSQLTail
+	// Untyped claim of a queue with limits: every type but the limited ones.
+	dequeueSQLExceptTypes = dequeueSQLHead + ` AND activity_type <> ALL($4)` + dequeueSQLTail
 
 	// Batch claim: $1 token prefix, $2 default lease ms, $3 queue, $4 limit,
 	// $5 type filter. Each row's token is prefix:id, so rows are fenced
@@ -576,9 +580,10 @@ const (
 		WHERE a.id = c.claim_id
 		RETURNING ` + claimColumnsSQL
 
-	dequeueBatchSQLAllTypes  = dequeueBatchSQLHead + dequeueBatchSQLTail
-	dequeueBatchSQLOneType   = dequeueBatchSQLHead + ` AND activity_type = $5` + dequeueBatchSQLTail
-	dequeueBatchSQLManyTypes = dequeueBatchSQLHead + ` AND activity_type = ANY($5)` + dequeueBatchSQLTail
+	dequeueBatchSQLAllTypes    = dequeueBatchSQLHead + dequeueBatchSQLTail
+	dequeueBatchSQLOneType     = dequeueBatchSQLHead + ` AND activity_type = $5` + dequeueBatchSQLTail
+	dequeueBatchSQLManyTypes   = dequeueBatchSQLHead + ` AND activity_type = ANY($5)` + dequeueBatchSQLTail
+	dequeueBatchSQLExceptTypes = dequeueBatchSQLHead + ` AND activity_type <> ALL($5)` + dequeueBatchSQLTail
 )
 
 func scanClaim(row pgx.Row) (storage.DequeuedActivity, error) {
@@ -605,10 +610,12 @@ func scanClaim(row pgx.Row) (storage.DequeuedActivity, error) {
 
 // waitForClaim re-probes on each work signal and at least every
 // workWaitProbe until probe claims, fails, or maxBlock expires (nil error).
-func (b *PostgresBackend) waitForClaim(ctx context.Context, maxBlock time.Duration, probe func() (claimed bool, err error)) error {
+// A probe that a limit held back is repeated within LimitProbeInterval: a
+// slot freed elsewhere or a refilled token sends no work signal.
+func (b *PostgresBackend) waitForClaim(ctx context.Context, maxBlock time.Duration, probe func() (claimed, heldBack bool, err error)) error {
 	deadline := time.Now().Add(maxBlock)
 
-	claimed, err := probe()
+	claimed, heldBack, err := probe()
 	if claimed || err != nil || maxBlock <= 0 {
 		return err
 	}
@@ -621,14 +628,21 @@ func (b *PostgresBackend) waitForClaim(ctx context.Context, maxBlock time.Durati
 
 	for {
 		// Re-probe after registering so a signal sent before it isn't missed.
-		if claimed, err := probe(); claimed || err != nil {
+		claimed, held, err := probe()
+		if claimed || err != nil {
 			return err
 		}
+		heldBack = heldBack || held
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return nil
 		}
-		probeTimer.Reset(min(remaining, workWaitProbe))
+		interval := workWaitProbe
+		if heldBack {
+			interval = storage.LimitProbeInterval
+		}
+		heldBack = false
+		probeTimer.Reset(min(remaining, interval))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -640,10 +654,11 @@ func (b *PostgresBackend) waitForClaim(ctx context.Context, maxBlock time.Durati
 
 func (b *PostgresBackend) Dequeue(ctx context.Context, workerID string, maxBlock time.Duration, activityTypes []string) (*storage.QueuedActivity, error) {
 	var claimed *storage.QueuedActivity
-	err := b.waitForClaim(ctx, maxBlock, func() (bool, error) {
+	err := b.waitForClaim(ctx, maxBlock, func() (bool, bool, error) {
+		var heldBack bool
 		var err error
-		claimed, err = b.dequeueOnce(ctx, workerID, activityTypes)
-		return claimed != nil, err
+		claimed, heldBack, err = b.dequeueOnce(ctx, workerID, activityTypes)
+		return claimed != nil, heldBack, err
 	})
 	if err != nil {
 		return nil, err
@@ -662,49 +677,81 @@ func claimContext(ctx context.Context) (context.Context, context.CancelFunc, err
 	return c, cancel, nil
 }
 
-func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, activityTypes []string) (*storage.QueuedActivity, error) {
+func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, activityTypes []string) (*storage.QueuedActivity, bool, error) {
 	ctx, cancel, err := claimContext(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer cancel()
+	plan, err := b.planClaim(ctx, activityTypes)
+	if err != nil {
+		return nil, false, err
+	}
+	var heldBack bool
+	if plan != nil {
+		var claims []storage.DequeuedActivity
+		claims, heldBack, err = b.claimLimited(ctx, plan, workerID, 1, false)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(claims) > 0 {
+			logClaim(&claims[0].Activity)
+			return &claims[0].Activity, heldBack, nil
+		}
+		if !plan.untyped && len(plan.rest) == 0 {
+			return nil, heldBack, nil
+		}
+	}
 	lease := b.defaultLeaseMS.Load()
 	var row pgx.Row
-	switch len(activityTypes) {
-	case 0:
-		row = b.pool.QueryRow(ctx, dequeueSQLAllTypes, workerID, lease, b.queueName)
-	case 1:
-		row = b.pool.QueryRow(ctx, dequeueSQLOneType, workerID, lease, b.queueName, activityTypes[0])
+	switch {
+	case plan != nil && plan.untyped && len(plan.except) > 0:
+		row = b.pool.QueryRow(ctx, dequeueSQLExceptTypes, workerID, lease, b.queueName, plan.except)
+	case plan != nil && !plan.untyped:
+		activityTypes = plan.rest
+		fallthrough
 	default:
-		row = b.pool.QueryRow(ctx, dequeueSQLManyTypes, workerID, lease, b.queueName, activityTypes)
+		switch len(activityTypes) {
+		case 0:
+			row = b.pool.QueryRow(ctx, dequeueSQLAllTypes, workerID, lease, b.queueName)
+		case 1:
+			row = b.pool.QueryRow(ctx, dequeueSQLOneType, workerID, lease, b.queueName, activityTypes[0])
+		default:
+			row = b.pool.QueryRow(ctx, dequeueSQLManyTypes, workerID, lease, b.queueName, activityTypes)
+		}
 	}
 
 	claim, err := scanClaim(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			return nil, heldBack, nil
 		}
-		return nil, databaseError(err, fmt.Sprintf("Failed to dequeue: %v", err))
+		return nil, false, databaseError(err, fmt.Sprintf("Failed to dequeue: %v", err))
 	}
-	a := &claim.Activity
+	logClaim(&claim.Activity)
+	return &claim.Activity, heldBack, nil
+}
+
+func logClaim(a *storage.QueuedActivity) {
 	slog.Debug("Activity claimed",
 		"activity_id", a.ID,
 		"activity_type", a.ActivityType,
 		"priority", a.Priority)
-	return a, nil
 }
 
 // DequeueBatch claims up to limit rows in one UPDATE, each with the token
-// "<workerIDPrefix>:<activity id>".
+// "<workerIDPrefix>:<activity id>". A claim that includes limited types
+// claims those first, under their limits, then the rest.
 func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix string, limit int, maxBlock time.Duration, activityTypes []string) ([]storage.DequeuedActivity, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	var claims []storage.DequeuedActivity
-	err := b.waitForClaim(ctx, maxBlock, func() (bool, error) {
+	err := b.waitForClaim(ctx, maxBlock, func() (bool, bool, error) {
+		var heldBack bool
 		var err error
-		claims, err = b.dequeueBatchOnce(ctx, workerIDPrefix, limit, activityTypes)
-		return len(claims) > 0, err
+		claims, heldBack, err = b.dequeueBatchOnce(ctx, workerIDPrefix, limit, activityTypes)
+		return len(claims) > 0, heldBack, err
 	})
 	if err != nil {
 		return nil, err
@@ -712,35 +759,66 @@ func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix strin
 	return claims, nil
 }
 
-func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix string, limit int, activityTypes []string) ([]storage.DequeuedActivity, error) {
+func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix string, limit int, activityTypes []string) ([]storage.DequeuedActivity, bool, error) {
 	ctx, cancel, err := claimContext(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer cancel()
+	plan, err := b.planClaim(ctx, activityTypes)
+	if err != nil {
+		return nil, false, err
+	}
+	var limited []storage.DequeuedActivity
+	var heldBack bool
+	if plan != nil {
+		limited, heldBack, err = b.claimLimited(ctx, plan, workerIDPrefix, limit, true)
+		if err != nil {
+			return nil, false, err
+		}
+		limit -= len(limited)
+		if limit == 0 || (!plan.untyped && len(plan.rest) == 0) {
+			return sortClaims(limited), heldBack, nil
+		}
+	}
 	var rows pgx.Rows
 	lease := b.defaultLeaseMS.Load()
-	switch len(activityTypes) {
-	case 0:
-		rows, err = b.pool.Query(ctx, dequeueBatchSQLAllTypes, workerIDPrefix, lease, b.queueName, limit)
-	case 1:
-		rows, err = b.pool.Query(ctx, dequeueBatchSQLOneType, workerIDPrefix, lease, b.queueName, limit, activityTypes[0])
+	switch {
+	case plan != nil && plan.untyped && len(plan.except) > 0:
+		rows, err = b.pool.Query(ctx, dequeueBatchSQLExceptTypes, workerIDPrefix, lease, b.queueName, limit, plan.except)
+	case plan != nil && !plan.untyped:
+		activityTypes = plan.rest
+		fallthrough
 	default:
-		rows, err = b.pool.Query(ctx, dequeueBatchSQLManyTypes, workerIDPrefix, lease, b.queueName, limit, activityTypes)
+		switch len(activityTypes) {
+		case 0:
+			rows, err = b.pool.Query(ctx, dequeueBatchSQLAllTypes, workerIDPrefix, lease, b.queueName, limit)
+		case 1:
+			rows, err = b.pool.Query(ctx, dequeueBatchSQLOneType, workerIDPrefix, lease, b.queueName, limit, activityTypes[0])
+		default:
+			rows, err = b.pool.Query(ctx, dequeueBatchSQLManyTypes, workerIDPrefix, lease, b.queueName, limit, activityTypes)
+		}
 	}
 	if err != nil {
-		return nil, databaseError(err, fmt.Sprintf("Failed to batch dequeue: %v", err))
+		return nil, false, databaseError(err, fmt.Sprintf("Failed to batch dequeue: %v", err))
 	}
 	claims, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (storage.DequeuedActivity, error) {
 		return scanClaim(row)
 	})
 	if err != nil {
-		return nil, databaseError(err, fmt.Sprintf("Failed to batch dequeue: %v", err))
+		return nil, false, databaseError(err, fmt.Sprintf("Failed to batch dequeue: %v", err))
 	}
+	claims = append(limited, claims...)
 	if len(claims) == 0 {
-		return nil, nil
+		return nil, heldBack, nil
 	}
-	// UPDATE ... RETURNING has no order: return the claims in claim order.
+	slog.Debug("Activities claimed", "count", len(claims), "limit", limit)
+	return sortClaims(claims), heldBack, nil
+}
+
+// sortClaims puts claims in claim order, which UPDATE ... RETURNING doesn't
+// keep.
+func sortClaims(claims []storage.DequeuedActivity) []storage.DequeuedActivity {
 	slices.SortStableFunc(claims, func(x, y storage.DequeuedActivity) int {
 		a, b := x.Activity, y.Activity
 		if a.Priority != b.Priority {
@@ -751,8 +829,7 @@ func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix s
 		}
 		return dueAt(a).Compare(dueAt(b))
 	})
-	slog.Debug("Activities claimed", "count", len(claims), "limit", limit)
-	return claims, nil
+	return claims
 }
 
 // dueAt is when a claimed activity became due: its schedule, else its creation.

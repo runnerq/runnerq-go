@@ -75,9 +75,22 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   including a mixed Go/TypeScript one; the dialect, time zones, daylight
   saving and catch-up follow runnerq-spec's `schedules.md`. Needs schema
   migration `0003_schedules`.
+- Concurrency and rate limits per activity type: `MaxConcurrent(n)` and
+  `RateLimit(n, per)` on `RegisterActivity` cap a type across every worker
+  of the queue (stored in `runnerq_limits`, upserted on start), and
+  `MaxConcurrentPerWorker(n)` caps it on one engine. `Client.SetLimit`,
+  `GetLimit`, `ListLimits` and `DeleteLimit` change limits at runtime. The
+  running count is read from the activities on each claim, so it never
+  drifts; waiting and retrying activities don't count. Claims of unlimited
+  types are unchanged. New optional `storage.LimitStorage`, covered by
+  `storagetest` (including 50 claimers against a limit of 10). Needs schema
+  migration `0005_limits` and the index `idx_runnerq_processing_v2`, which
+  replaces `idx_runnerq_processing`. See [docs/limits.md](docs/limits.md).
 
 ### Changed
 
+- `RegisterActivity` and `RegisterActivityWithName` take options
+  (`...RegisterOption`); existing calls compile unchanged.
 - Go 1.25 is the minimum (was 1.27 on `main`); CI tests Go 1.25, 1.26 and
   1.27 and Postgres 14 to 18.
 - Leaner storage: about half the writes and storage per activity; lease

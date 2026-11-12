@@ -255,6 +255,21 @@ See [Schedules](docs/schedules.md).
 </details>
 
 <details>
+<summary><strong>Concurrency and rate limits</strong></summary>
+
+Cap a type fleet-wide where you register it: how many run at once, how many
+start per second, or both. Limits live in the database, so every worker sees
+one value, and the client changes them at runtime.
+
+```go
+engine.RegisterActivity(&SendEmail{}, runnerq.MaxConcurrent(10), runnerq.RateLimit(5, time.Second))
+```
+
+See [Limits](docs/limits.md).
+
+</details>
+
+<details>
 <summary><strong>Pluggable storage</strong></summary>
 
 PostgreSQL is built in. To use something else, implement `storage.Storage` and
@@ -340,6 +355,7 @@ Full reference in [`docs/`](docs/):
 - [Durable Execution](docs/durable-execution.md) — `Step`, `Run`, `Sleep`, signals, versioning
 - [Retries & Dead Letter](docs/retries-and-dead-letter.md)
 - [Schedules](docs/schedules.md) — cron schedules, time zones, catch-up
+- [Limits](docs/limits.md) — concurrency and rate limits per activity type
 - [Configuration](docs/configuration.md) — tuning, scheduling, workload isolation, retention
 - [Managing work](docs/managing-work.md) — the client: cancel, retry, reschedule, run now, list
 - [Observability](docs/observability.md) — reading activities from code, worker snapshots, labelled metrics and gauges, tracing (OpenTelemetry in `otel/`)

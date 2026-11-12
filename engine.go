@@ -28,6 +28,8 @@ type WorkerEngine struct {
 	queue    activityQueue
 	backend  storage.Storage
 	handlers map[string]ActivityHandler
+	options  map[string]registration // guarded by mu; by type, for types registered with options
+	local    *localLimits            // set by Start: MaxConcurrentPerWorker caps
 	config   WorkerConfig
 	running  atomic.Bool
 	metrics  LabeledMetricsSink
@@ -201,6 +203,7 @@ func NewWorkerEngineWithBackend(backend storage.Storage, config WorkerConfig) *W
 		queue:      adapter,
 		backend:    backend,
 		handlers:   make(map[string]ActivityHandler),
+		options:    make(map[string]registration),
 		config:     config,
 		shutdownCh: shutdownCh,
 		metrics:    counts,
@@ -278,7 +281,12 @@ func (e *WorkerEngine) ActivityTypes() []string {
 // The type is stored with every activity, so renaming the handler struct
 // strands rows already enqueued; pin the name with RegisterActivityWithName
 // where that matters.
-func (e *WorkerEngine) RegisterActivity(handler ActivityHandler) {
+//
+// Options set limits: MaxConcurrent and RateLimit for the whole queue, which
+// Start stores, and MaxConcurrentPerWorker for this engine:
+//
+//	engine.RegisterActivity(&SendEmail{}, runnerq.MaxConcurrent(10), runnerq.RateLimit(5, time.Second))
+func (e *WorkerEngine) RegisterActivity(handler ActivityHandler, opts ...RegisterOption) {
 	if isNilHandler(handler) {
 		panic("handler must be non-nil")
 	}
@@ -286,14 +294,15 @@ func (e *WorkerEngine) RegisterActivity(handler ActivityHandler) {
 	if err != nil {
 		panic(err)
 	}
-	e.RegisterActivityWithName(activityType, handler)
+	e.RegisterActivityWithName(activityType, handler, opts...)
 }
 
 // RegisterActivityWithName registers a handler under an explicit activity
 // type, decoupling the stored type from the Go name or serving several types
 // with one handler type. It panics on an empty type, a nil handler, a type
-// already registered, or once the engine is running.
-func (e *WorkerEngine) RegisterActivityWithName(activityType string, handler ActivityHandler) {
+// already registered, or once the engine is running. Options are as for
+// RegisterActivity.
+func (e *WorkerEngine) RegisterActivityWithName(activityType string, handler ActivityHandler, opts ...RegisterOption) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.active {
@@ -306,6 +315,13 @@ func (e *WorkerEngine) RegisterActivityWithName(activityType string, handler Act
 		panic(fmt.Sprintf("activity type %q is already registered", activityType))
 	}
 	e.handlers[activityType] = handler
+	if len(opts) > 0 {
+		var r registration
+		for _, o := range opts {
+			o(&r)
+		}
+		e.options[activityType] = r
+	}
 }
 
 // isNilHandler also catches a typed nil such as (*ChargeCard)(nil), which
@@ -379,6 +395,14 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	e.servedTypes = slices.Clone(types)
 	observers := slices.Clone(e.observers)
 	schedules := slices.Clone(e.schedules)
+	limits := sortedLimits(e.options)
+	caps := map[string]int{}
+	for _, t := range types {
+		if n := e.options[t].perWorker; n > 0 {
+			caps[t] = n
+		}
+	}
+	e.local = newLocalLimits(caps)
 	e.running.Store(true)
 	// Parent cancellation stops intake below. Handler and persistence lifetime
 	// ends after the drain, including when the caller uses a signal context.
@@ -390,7 +414,11 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	shutdownCh := e.shutdownCh
 	e.mu.Unlock()
 	defer engineCancel()
-	if err := e.upsertSchedules(ctx, schedules); err != nil {
+	err := e.upsertSchedules(ctx, schedules)
+	if err == nil {
+		err = e.storeLimits(ctx, limits)
+	}
+	if err != nil {
 		e.mu.Lock()
 		e.active = false
 		e.running.Store(false)
@@ -554,7 +582,22 @@ func (e *WorkerEngine) runWorkerLoop(ctx, handlerCtx context.Context, workerID i
 		// A fresh token per claim, so an old attempt's ack can't match a new
 		// one on the same slot.
 		workerLabel := fmt.Sprintf("%s:worker-%d:%s", e.instanceID, workerID, uuid.New())
-		act, err := e.queue.Dequeue(ctx, workerDequeueBlock, workerLabel)
+		types, reserved, freed := e.local.reserve(e.servedTypesNow())
+		if len(types) == 0 && freed != nil {
+			// Every type is at its per-worker cap.
+			select {
+			case <-ctx.Done():
+				return
+			case <-freed:
+			}
+			continue
+		}
+		act, err := e.queue.Dequeue(ctx, workerDequeueBlock, workerLabel, e.claimTypes(types))
+		claimed := ""
+		if act != nil {
+			claimed = act.ActivityType
+		}
+		e.local.release(reserved, claimed)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -571,6 +614,9 @@ func (e *WorkerEngine) runWorkerLoop(ctx, handlerCtx context.Context, workerID i
 		}
 
 		e.processActivity(handlerCtx, act, workerLabel, workerID)
+		if slices.Contains(reserved, claimed) {
+			e.local.done(claimed)
+		}
 	}
 
 	slog.Debug("Worker loop stopped", "worker_id", workerID)
@@ -609,14 +655,40 @@ func (e *WorkerEngine) runBatchDispatcher(ctx, handlerCtx context.Context, queue
 		}
 		held = takeIdle(idle, held)
 
+		types, limit, freed := e.local.plan(e.servedTypesNow(), len(held))
+		if len(types) == 0 && freed != nil {
+			// Every type is at its per-worker cap.
+			select {
+			case <-ctx.Done():
+				return
+			case <-freed:
+			}
+			continue
+		}
+		// A per-worker cap narrowed the claim: start over when it has room.
+		claimCtx, stopClaim := ctx, context.CancelFunc(func() {})
+		if freed != nil {
+			claimCtx, stopClaim = context.WithCancel(ctx)
+			go func() {
+				select {
+				case <-freed:
+					stopClaim()
+				case <-claimCtx.Done():
+				}
+			}()
+		}
 		// A fresh prefix per call; the backend appends each activity's id.
 		prefix := fmt.Sprintf("%s:batch:%s", e.instanceID, uuid.New())
-		claims, err := queue.DequeueBatch(ctx, len(held), workerDequeueBlock, prefix)
+		claims, err := queue.DequeueBatch(claimCtx, limit, workerDequeueBlock, prefix, e.claimTypes(types))
+		stopClaim()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Error("Failed to batch dequeue activities", "error", err, "limit", len(held))
+			if claimCtx.Err() != nil {
+				continue
+			}
+			slog.Error("Failed to batch dequeue activities", "error", err, "limit", limit)
 			if !pauseAfterDequeueError(ctx) {
 				return
 			}
@@ -625,14 +697,33 @@ func (e *WorkerEngine) runBatchDispatcher(ctx, handlerCtx context.Context, queue
 		for _, claim := range claims {
 			slot := held[len(held)-1]
 			held = held[:len(held)-1]
+			typ := claim.activity.ActivityType
+			e.local.start(typ)
 			inFlight.Go(func() {
 				defer func() { idle <- slot }()
+				defer e.local.done(typ)
 				e.processActivity(handlerCtx, claim.activity, claim.leaseID, slot)
 			})
 		}
 	}
 
 	slog.Debug("Batch dispatcher stopped")
+}
+
+// servedTypesNow is the types Start chose to claim.
+func (e *WorkerEngine) servedTypesNow() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.servedTypes
+}
+
+// claimTypes is nil, the adapter's own filter, unless a per-worker cap left a
+// type out.
+func (e *WorkerEngine) claimTypes(types []string) []string {
+	if e.local == nil {
+		return nil
+	}
+	return types
 }
 
 // takeIdle appends every slot idle right now to held, without waiting.

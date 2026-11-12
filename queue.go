@@ -28,7 +28,9 @@ type activityResult struct {
 // storage.Storage.
 type activityQueue interface {
 	Enqueue(ctx context.Context, a *activity) error
-	Dequeue(ctx context.Context, timeout time.Duration, workerID string) (*activity, error)
+	// Dequeue claims one activity of types, or of the engine's types when
+	// types is nil.
+	Dequeue(ctx context.Context, timeout time.Duration, workerID string, types []string) (*activity, error)
 	// MarkCompleted stores the result atomically with completion, even a nil
 	// one, so awaiting parents resolve.
 	MarkCompleted(ctx context.Context, a *activity, result json.RawMessage, workerID string) error
@@ -57,7 +59,8 @@ type batchActivityQueue interface {
 	activityQueue
 	// DequeueBatch claims up to limit activities, blocking up to timeout for
 	// the first. workerIDPrefix must be fresh per call; tokens derive from it.
-	DequeueBatch(ctx context.Context, limit int, timeout time.Duration, workerIDPrefix string) ([]claimedActivity, error)
+	// types narrows the claim as for Dequeue.
+	DequeueBatch(ctx context.Context, limit int, timeout time.Duration, workerIDPrefix string, types []string) ([]claimedActivity, error)
 }
 
 // claimedActivity pairs an activity with its claim token, which every
@@ -191,8 +194,11 @@ func (a *backendQueueAdapter) Enqueue(ctx context.Context, act *activity) error 
 	return a.backend.Enqueue(ctx, activityToQueued(act))
 }
 
-func (a *backendQueueAdapter) Dequeue(ctx context.Context, timeout time.Duration, workerID string) (*activity, error) {
-	q, err := a.backend.Dequeue(ctx, workerID, timeout, a.activityTypes)
+func (a *backendQueueAdapter) Dequeue(ctx context.Context, timeout time.Duration, workerID string, types []string) (*activity, error) {
+	if types == nil {
+		types = a.activityTypes
+	}
+	q, err := a.backend.Dequeue(ctx, workerID, timeout, types)
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +208,11 @@ func (a *backendQueueAdapter) Dequeue(ctx context.Context, timeout time.Duration
 	return queuedToActivity(q), nil
 }
 
-func (a *batchBackendQueueAdapter) DequeueBatch(ctx context.Context, limit int, timeout time.Duration, workerIDPrefix string) ([]claimedActivity, error) {
-	claims, err := a.batch.DequeueBatch(ctx, workerIDPrefix, limit, timeout, a.activityTypes)
+func (a *batchBackendQueueAdapter) DequeueBatch(ctx context.Context, limit int, timeout time.Duration, workerIDPrefix string, types []string) ([]claimedActivity, error) {
+	if types == nil {
+		types = a.activityTypes
+	}
+	claims, err := a.batch.DequeueBatch(ctx, workerIDPrefix, limit, timeout, types)
 	if err != nil {
 		return nil, err
 	}

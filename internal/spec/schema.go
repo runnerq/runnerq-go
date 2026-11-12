@@ -264,6 +264,38 @@ CREATE INDEX IF NOT EXISTS idx_runnerq_schedules_due
     ON runnerq_schedules (queue_name, next_fire_at)
     WHERE NOT paused;
 `},
+	{Name: "0005_limits", SQL: `-- Concurrency and rate limits (limits.md). A limit applies to one activity
+-- type within a queue; a type without a row is unlimited.
+--
+-- max_concurrent caps the type's running ('processing') activities across
+-- every worker of the queue. It is not a counter: a claim counts the running
+-- rows (idx_runnerq_processing_v2) while it holds this row's lock, so a
+-- worker that dies leaves nothing to drift.
+--
+-- rate_tokens and rate_per_seconds are a token bucket: at most rate_tokens
+-- claims in a burst, refilled continuously at rate_tokens per
+-- rate_per_seconds. tokens and refilled_at are the bucket's level and when it
+-- was last brought up to date, by the database clock; a claim updates them
+-- under the same lock. Both rate columns are set or both are null.
+--
+-- updated_at is when the definition (max_concurrent, rate_tokens,
+-- rate_per_seconds) last changed.
+CREATE TABLE IF NOT EXISTS runnerq_limits (
+    queue_name TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    max_concurrent INTEGER,
+    rate_tokens INTEGER,
+    rate_per_seconds DOUBLE PRECISION,
+    tokens DOUBLE PRECISION NOT NULL DEFAULT 0,
+    refilled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (queue_name, activity_type),
+    CHECK (max_concurrent IS NULL OR max_concurrent >= 1),
+    CHECK ((rate_tokens IS NULL) = (rate_per_seconds IS NULL)),
+    CHECK (rate_tokens IS NULL OR (rate_tokens >= 1 AND rate_per_seconds > 0)),
+    CHECK (max_concurrent IS NOT NULL OR rate_tokens IS NOT NULL)
+);
+`},
 }
 
 // PostgresConcurrentIndexes are built in order after the migrations.
@@ -290,8 +322,8 @@ ON runnerq_activities (created_at DESC, id DESC)`},
 	{Name: "idx_runnerq_query_status", Table: "runnerq_activities", Replaces: "idx_runnerq_query_status_created", SQL: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_runnerq_query_status
 ON runnerq_activities (status, created_at DESC, id DESC)
 WHERE status <> 'completed'`},
-	{Name: "idx_runnerq_processing", Table: "runnerq_activities", Replaces: "idx_runnerq_activities_processing", SQL: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_runnerq_processing
-ON runnerq_activities (queue_name)
+	{Name: "idx_runnerq_processing_v2", Table: "runnerq_activities", Replaces: "idx_runnerq_processing", SQL: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_runnerq_processing_v2
+ON runnerq_activities (queue_name, activity_type)
 WHERE status = 'processing'`},
 	{Name: "idx_runnerq_root_children", Table: "runnerq_activities", Replaces: "idx_runnerq_root_id", SQL: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_runnerq_root_children
 ON runnerq_activities (root_activity_id)
@@ -372,6 +404,16 @@ var PostgresCatalog = Catalog{
 			{Name: "queue_name", Type: "text", Nullable: false, Default: ""},
 			{Name: "serialization", Type: "text", Nullable: false, Default: "'json-v1'::text"},
 		}},
+		{Name: "runnerq_limits", PrimaryKey: []string{"queue_name", "activity_type"}, Columns: []CatalogColumn{
+			{Name: "activity_type", Type: "text", Nullable: false, Default: ""},
+			{Name: "max_concurrent", Type: "int4", Nullable: true, Default: ""},
+			{Name: "queue_name", Type: "text", Nullable: false, Default: ""},
+			{Name: "rate_per_seconds", Type: "float8", Nullable: true, Default: ""},
+			{Name: "rate_tokens", Type: "int4", Nullable: true, Default: ""},
+			{Name: "refilled_at", Type: "timestamptz", Nullable: false, Default: "now()"},
+			{Name: "tokens", Type: "float8", Nullable: false, Default: "0"},
+			{Name: "updated_at", Type: "timestamptz", Nullable: false, Default: "now()"},
+		}},
 		{Name: "runnerq_results", PrimaryKey: []string{"activity_id"}, Columns: []CatalogColumn{
 			{Name: "activity_id", Type: "uuid", Nullable: false, Default: ""},
 			{Name: "created_at", Type: "timestamptz", Nullable: false, Default: "now()"},
@@ -408,7 +450,7 @@ var PostgresCatalog = Catalog{
 		{Name: "idx_runnerq_events_activity", Table: "runnerq_events", Definition: "CREATE INDEX idx_runnerq_events_activity ON runnerq_events USING btree (activity_id, created_at DESC)"},
 		{Name: "idx_runnerq_events_queue_seq", Table: "runnerq_events", Definition: "CREATE INDEX idx_runnerq_events_queue_seq ON runnerq_events USING btree (queue_name, id)"},
 		{Name: "idx_runnerq_parent_id", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_parent_id ON runnerq_activities USING btree (parent_activity_id) WHERE (parent_activity_id IS NOT NULL)"},
-		{Name: "idx_runnerq_processing", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_processing ON runnerq_activities USING btree (queue_name) WHERE (status = 'processing'::text)"},
+		{Name: "idx_runnerq_processing_v2", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_processing_v2 ON runnerq_activities USING btree (queue_name, activity_type) WHERE (status = 'processing'::text)"},
 		{Name: "idx_runnerq_query_created", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_query_created ON runnerq_activities USING btree (created_at DESC, id DESC)"},
 		{Name: "idx_runnerq_query_status", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_query_status ON runnerq_activities USING btree (status, created_at DESC, id DESC) WHERE (status <> 'completed'::text)"},
 		{Name: "idx_runnerq_results_by_owner", Table: "runnerq_results", Definition: "CREATE INDEX idx_runnerq_results_by_owner ON runnerq_results USING btree (owner_activity_id) WHERE (owner_activity_id IS NOT NULL)"},
@@ -417,5 +459,5 @@ var PostgresCatalog = Catalog{
 		{Name: "idx_runnerq_schedules_due", Table: "runnerq_schedules", Definition: "CREATE INDEX idx_runnerq_schedules_due ON runnerq_schedules USING btree (queue_name, next_fire_at) WHERE (NOT paused)"},
 	},
 	RetiredColumns: []string{"runnerq_activities.payload"},
-	RetiredIndexes: []string{"idx_runnerq_dequeue_effective", "idx_runnerq_dequeue_order", "idx_runnerq_query_status_created", "idx_runnerq_activities_processing", "idx_runnerq_root_id", "idx_runnerq_root_terminal_age", "idx_runnerq_results_owner", "idx_runnerq_completed_non_cron", "idx_runnerq_completed_cron", "idx_runnerq_dead_letter", "idx_runnerq_root_only", "idx_runnerq_root_status", "idx_runnerq_query_type_created", "idx_runnerq_dependencies_producer"},
+	RetiredIndexes: []string{"idx_runnerq_dequeue_effective", "idx_runnerq_dequeue_order", "idx_runnerq_query_status_created", "idx_runnerq_processing", "idx_runnerq_root_id", "idx_runnerq_root_terminal_age", "idx_runnerq_results_owner", "idx_runnerq_completed_non_cron", "idx_runnerq_completed_cron", "idx_runnerq_dead_letter", "idx_runnerq_root_only", "idx_runnerq_root_status", "idx_runnerq_query_type_created", "idx_runnerq_dependencies_producer", "idx_runnerq_activities_processing"},
 }
