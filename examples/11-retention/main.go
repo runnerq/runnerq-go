@@ -67,8 +67,7 @@ func main() {
 		backend.Close()
 	}()
 
-	future, err := engine.GetActivityExecutor().
-		Activity[QuickJob]().
+	future, err := runnerq.Activity[QuickJob](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{}`)).
 		Execute(ctx)
 	if err != nil {

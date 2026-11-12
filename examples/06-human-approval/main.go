@@ -85,8 +85,7 @@ func main() {
 	}()
 
 	// Start the workflow; its activity ID is the handle we signal.
-	future, err := engine.GetActivityExecutor().
-		Activity[ExpenseApproval]().
+	future, err := runnerq.Activity[ExpenseApproval](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{"amount":4200,"who":"katherine"}`)).
 		Execute(ctx)
 	if err != nil {

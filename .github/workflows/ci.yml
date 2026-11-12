@@ -3,18 +3,29 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every PR, including PRs stacked on other branches.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Go ${{ matrix.go }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported toolchains: go.mod's floor through the latest release.
+        go: ['1.25', '1.26', '1.27']
+    env:
+      # Build with exactly the matrix toolchain. Without this a dependency
+      # declaring a newer go line would silently switch toolchains.
+      GOTOOLCHAIN: local
+      RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: runnerq_test
@@ -32,7 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache: true
 
       # `go build ./...` compiles every package + every `main` in examples,
@@ -51,11 +62,13 @@ jobs:
       # internal/spec and the conductor's wire types are generated from the
       # pinned runnerq-spec submodule.
       - name: Generated spec code is current
+        if: matrix.go == '1.27'
         run: go generate ./internal/spec && go -C conductor generate ./internal/wire && git diff --exit-code
 
       # gofmt check — fails the job if any tracked .go file would be
       # rewritten. Cheap and catches accidental mis-formatting before review.
       - name: gofmt
+        if: matrix.go == '1.27'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -69,14 +82,10 @@ jobs:
       # without a database). -race is non-negotiable for an engine this
       # concurrency-heavy.
       - name: Test
-        env:
-          RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
         run: go test ./... -race -count=1 -timeout=5m && go -C conductor test ./... -race -count=1 -timeout=5m
 
       # runnerq-spec's cross-language scenarios, through this SDK's driver.
       - name: Conformance
-        env:
-          RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
         run: |
           go build -o "$RUNNER_TEMP/conformancedriver" ./internal/conformancedriver
           go run -C spec/tools/conformance . -v -driver go="$RUNNER_TEMP/conformancedriver"

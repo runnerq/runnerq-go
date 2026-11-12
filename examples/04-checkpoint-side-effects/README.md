@@ -40,17 +40,17 @@ billing_run attempt #2
 ## The key idea
 
 ```go
-receipt, err := ctx.RunStep("charge-credits", func(c context.Context) (Receipt, error) {
+receipt, err := runnerq.RunStep(ctx, "charge-credits", func(c context.Context) (Receipt, error) {
     return chargeCredits(c)   // stored on success → never runs again
 })
 if err != nil { return nil, err }
 
-_, err := ctx.RunStep("send-batch", func(c context.Context) (int, error) {
+_, err := runnerq.RunStep(ctx, "send-batch", func(c context.Context) (int, error) {
     return sendBatch(c)       // retryable failure → re-runs; charge stays put
 })
 ```
 
-`ctx.RunStep` semantics: a **success** is stored and replayed; a **`NonRetryError`**
+`runnerq.RunStep` semantics: a **success** is stored and replayed; a **`NonRetryError`**
 is stored and replayed (the step stays failed); a **retryable error** is not
 stored, so the step runs again next attempt. A crash between `fn` returning and
 the checkpoint committing re-runs `fn` — so make `fn` as idempotent as the
