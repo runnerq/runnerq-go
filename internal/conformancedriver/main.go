@@ -113,6 +113,10 @@ type args struct {
 	Timezone     string `json:"timezone"`
 	CatchUp      string `json:"catch_up"`
 	CatchUpLimit int    `json:"catch_up_limit"`
+
+	MaxConcurrent int     `json:"max_concurrent"`
+	RateTokens    int     `json:"rate_tokens"`
+	RatePerS      float64 `json:"rate_per_s"`
 }
 
 var behaviors = map[string]storage.IdempotencyBehavior{
@@ -227,6 +231,34 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 	case "fire_schedules":
 		n, err := d.b.FireDueSchedules(ctx, max(a.Limit, 100))
 		return map[string]any{"count": n}, err
+	case "set_limit":
+		return nil, d.b.SetLimit(ctx, storage.Limit{ActivityType: a.Type, MaxConcurrent: a.MaxConcurrent,
+			RateLimit: a.RateTokens, RatePeriod: time.Duration(a.RatePerS * float64(time.Second))})
+	case "get_limit":
+		l, err := d.b.GetLimit(ctx, a.Type)
+		if kindOf(err) == "not_found" {
+			return map[string]any{"limit": nil}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]any{"max_concurrent": nil, "rate_tokens": nil, "rate_per_s": nil}
+		if l.MaxConcurrent > 0 {
+			out["max_concurrent"] = l.MaxConcurrent
+		}
+		if l.RateLimit > 0 {
+			out["rate_tokens"], out["rate_per_s"] = l.RateLimit, l.RatePeriod.Seconds()
+		}
+		return map[string]any{"limit": out}, nil
+	case "delete_limit":
+		return nil, d.b.DeleteLimit(ctx, a.Type)
+	case "list_limits":
+		list, err := d.b.ListLimits(ctx)
+		types := []string{}
+		for _, l := range list {
+			types = append(types, l.ActivityType)
+		}
+		return map[string]any{"types": types}, err
 	case "get_result":
 		r, err := d.b.GetResult(ctx, a.ID)
 		if err != nil || r == nil {
