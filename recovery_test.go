@@ -41,8 +41,11 @@ func (q *recoveryQueue) Yield(_ context.Context, _ *activity, w time.Time, _, _,
 
 type recoveryMetrics map[string]uint64
 
-func (m recoveryMetrics) IncCounter(k string, n uint64)         { m[k] += n }
-func (m recoveryMetrics) ObserveDuration(string, time.Duration) {}
+func (m recoveryMetrics) IncCounter(k string, n uint64)                 { m[k] += n }
+func (m recoveryMetrics) ObserveDuration(string, time.Duration)         {}
+func (m recoveryMetrics) AddCounter(k string, n uint64, _ MetricLabels) { m[k] += n }
+func (m recoveryMetrics) RecordHistogram(string, float64, MetricLabels) {}
+func (m recoveryMetrics) SetGauge(string, float64, MetricLabels)        {}
 func recoveryEngine(q activityQueue, h ActivityHandler) *WorkerEngine {
 	return &WorkerEngine{queue: q, handlers: map[string]ActivityHandler{"test": h}, metrics: recoveryMetrics{}, config: DefaultWorkerConfig()}
 }
@@ -110,7 +113,7 @@ func TestStorageRecoveryCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	calls := 0
-	err := retryStorage(ctx, "test", nil, nil, func(context.Context) error { calls++; cancel(); return storage.NewUnavailableError("outage") })
+	err := retryStorage(ctx, "test", nil, MetricLabels{}, nil, func(context.Context) error { calls++; cancel(); return storage.NewUnavailableError("outage") })
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
@@ -567,7 +570,7 @@ func TestEngineExecutorOnHandlerContextSpawnsChildren(t *testing.T) {
 			{c.Ctx, root.ActivityNamed("child").Step("s")},
 			{c.Ctx, root.ActivityNamed("root").AsRoot()},
 			{context.Background(), root.ActivityNamed("root")},
-			{c.Ctx, newActivityExecutor(other, 0, nil).ActivityNamed("root")},
+			{c.Ctx, newActivityExecutor(other, 0, nil, nil).ActivityNamed("root")},
 		} {
 			if _, err := b.b.Payload(json.RawMessage(`{}`)).Execute(b.ctx); err != nil {
 				return nil, err

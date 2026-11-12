@@ -35,17 +35,18 @@ runnerq-go follows [semver](https://semver.org) as described under
 1. Pick the version from the labels merged since the last tag and the
    policy below.
 2. In a PR, rename `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z` (and
-   start a new empty `## Unreleased` above it). If the conductor module is
-   released too, point `conductor/go.mod`'s
-   `require github.com/runnerq/runnerq-go` at `vX.Y.Z` and its
+   start a new empty `## Unreleased` above it). The `conductor` and `otel`
+   modules are released with the SDK: point their `go.mod`'s
+   `require github.com/runnerq/runnerq-go` at `vX.Y.Z`, and the conductor's
    `runnerq-spec` require at a tagged spec release.
 3. After it merges, tag `main`:
 
    ```bash
    git checkout main && git pull
    git tag -a vX.Y.Z -m "vX.Y.Z"
-   git tag -a conductor/vX.Y.Z -m "conductor/vX.Y.Z"   # same commit, when released
-   git push origin vX.Y.Z conductor/vX.Y.Z
+   git tag -a conductor/vX.Y.Z -m "conductor/vX.Y.Z"   # same commit
+   git tag -a otel/vX.Y.Z -m "otel/vX.Y.Z"             # same commit
+   git push origin vX.Y.Z conductor/vX.Y.Z otel/vX.Y.Z
    ```
 
 The `Release` workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml))
@@ -74,8 +75,8 @@ the first time someone runs `go get github.com/runnerq/runnerq-go@vX.Y.Z`.
 ### What the policy covers
 
 - The public API: exported names in `runnerq`, `executor`, `storage`,
-  `storage/storagetest`, `storage/postgres`, and the `conductor` module
-  (`Start()`, `Config`, `Agent`, `Handler`).
+  `storage/storagetest`, `storage/postgres`, the `conductor` module
+  (`Start()`, `Config`, `Agent`, `Handler`) and the `otel` module.
 - The Postgres schema: from v0.6 on, schema changes are additive migrations
   (new tables, new nullable columns), so a new SDK can run beside the
   previous minor during a rolling deploy. The upgrade test in CI checks this

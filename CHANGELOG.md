@@ -52,6 +52,13 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   Go module so the SDK does not carry its dependencies.
 - runnerq-spec's cross-language conformance scenarios run in CI, along with
   shared constants, vectors, and the retry decision and backoff.
+- Observability: `LabeledMetricsSink` (labels `queue`, `activity_type`,
+  `status`; the old `MetricsSink` works through `UnlabeledMetrics`), gauges
+  for queue depth, oldest pending age and activities in flight (off unless
+  `GaugeInterval` is set), and a generic `Tracer` that carries the W3C
+  `traceparent` in activity metadata. Metric and span names come from
+  runnerq-spec. OpenTelemetry is the separate `otel` module
+  (`github.com/runnerq/runnerq-go/otel`); the core gains no dependency.
 
 ### Changed
 
@@ -61,6 +68,8 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   renewals are HOT updates.
 - A backend's lease setting stands unless the worker config sets one.
 - `max_attempts` in queries is the total attempts allowed.
+- Metric name constants are exported (`Metric*`); a claim lost while
+  completing is logged as a warning, not an error.
 
 ### Fixed
 

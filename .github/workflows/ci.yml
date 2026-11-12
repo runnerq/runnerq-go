@@ -59,6 +59,11 @@ jobs:
       - name: Build and vet the conductor module
         run: go -C conductor build ./... && go -C conductor vet ./...
 
+      # OpenTelemetry support is its own module (otel/go.mod), so the SDK
+      # depends on no OpenTelemetry package.
+      - name: Build and vet the otel module
+        run: go -C otel build ./... && go -C otel vet ./...
+
       # internal/spec and the conductor's wire types are generated from the
       # pinned runnerq-spec submodule.
       - name: Generated spec code is current
@@ -82,7 +87,7 @@ jobs:
       # without a database). -race is non-negotiable for an engine this
       # concurrency-heavy.
       - name: Test
-        run: go test ./... -race -count=1 -timeout=5m && go -C conductor test ./... -race -count=1 -timeout=5m
+        run: go test ./... -race -count=1 -timeout=5m && go -C conductor test ./... -race -count=1 -timeout=5m && go -C otel test ./... -race -count=1 -timeout=5m
 
       # runnerq-spec's cross-language scenarios, through this SDK's driver.
       - name: Conformance
