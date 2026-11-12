@@ -64,7 +64,7 @@ var gaugeStatuses = []string{
 func (e *WorkerEngine) runGaugeSampler(ctx context.Context, interval time.Duration, types []string) {
 	reported := map[MetricLabels]bool{}
 	for {
-		wait := time.Duration(float64(interval) * (0.8 + 0.4*rand.Float64()))
+		wait := time.Duration(float64(interval) * (0.8 + 0.4*rand.Float64())) // #nosec G404 -- sampling jitter, not a secret
 		select {
 		case <-ctx.Done():
 			return
