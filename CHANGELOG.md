@@ -59,6 +59,16 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   `traceparent` in activity metadata. Metric and span names come from
   runnerq-spec. OpenTelemetry is the separate `otel` module
   (`github.com/runnerq/runnerq-go/otel`); the core gains no dependency.
+- Managing work from code: `runnerq.NewClient(backend)` (no engine needed)
+  and `WorkerEngine.Client()` submit, signal and await activities, read them
+  (`Get`, `List`) and manage them (`Cancel`, `Retry`, `Reschedule`, `RunNow`,
+  `SetPriority`, `Delete`), idempotent by command id. Cancelling a running
+  activity stops its handler on whichever worker holds it (`ErrClaimLost`),
+  cascades to children by default, and an awaiting parent sees
+  `IsCancelled(err)`. Command fingerprints follow runnerq-spec, so a mixed
+  Go/TypeScript fleet replays each other's commands.
+- `runnerq.Activity[T](client)`: the package function takes a `Spawner`
+  (`*ActivityExecutor` or `*Client`).
 
 ### Changed
 
@@ -68,6 +78,9 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   renewals are HOT updates.
 - A backend's lease setting stands unless the worker config sets one.
 - `max_attempts` in queries is the total attempts allowed.
+- `ActivityStatus` holds the canonical statuses (lowercase, as in
+  runnerq-spec): `StatusRetrying` is gone; `StatusScheduled`, `StatusWaiting`
+  and `StatusCancelled` are new.
 - Metric name constants are exported (`Metric*`); a claim lost while
   completing is logged as a warning, not an error.
 

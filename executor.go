@@ -132,7 +132,14 @@ func translateResult(result *activityResult) (json.RawMessage, error) {
 		return result.Data, nil
 	}
 	resultJSON, _ := json.Marshal(result.Data)
-	return nil, &WorkerError{Kind: ErrCustom, Message: string(resultJSON)}
+	kind := ErrCustom
+	var failure struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(result.Data, &failure) == nil && failure.Type == "cancelled" {
+		kind = ErrActivityCancelled
+	}
+	return nil, &WorkerError{Kind: kind, Message: string(resultJSON)}
 }
 
 // ActivityBuilder configures one spawn; Execute enqueues it.
@@ -378,9 +385,19 @@ func (w *ActivityExecutor) scopedForChild(parent *activity) *ActivityExecutor {
 // a pinned name (RegisterActivityWithName) are spawned with
 // ActivityExecutor.ActivityNamed.
 //
+// From a Client, it submits a root activity:
+//
+//	fut, err := runnerq.Activity[ResizeImage](client).Payload(p).Execute(ctx)
+//
 // On Go 1.27 and later, w.Activity[T]() is the same call as a method.
-func Activity[T any](w *ActivityExecutor) *ActivityBuilder {
+func Activity[T any](w Spawner) *ActivityBuilder {
 	return w.ActivityNamed(NameOf[T]())
+}
+
+// Spawner starts activities by type name: an *ActivityExecutor (children of
+// the running handler, or roots) or a *Client (roots).
+type Spawner interface {
+	ActivityNamed(activityType string) *ActivityBuilder
 }
 
 // ActivityNamed starts a spawn of activityType by name: for handlers

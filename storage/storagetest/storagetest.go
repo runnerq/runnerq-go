@@ -18,7 +18,8 @@
 //
 // CheckpointStorage, DependencyStorage, AttemptLeaseStorage and SpawnStorage
 // are required: their tests fail without them. Tests for BatchQueueStorage,
-// ResultWaiter, QueryStorage and CommandStorage are skipped when absent.
+// ResultWaiter, ResultNotifier, QueryStorage and CommandStorage are skipped
+// when absent.
 package storagetest
 
 import (

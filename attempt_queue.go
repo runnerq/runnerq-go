@@ -46,7 +46,7 @@ func (q *attemptQueue) renew(ctx context.Context) error {
 			return err
 		}
 		if !owned {
-			return &storage.StorageError{Kind: storage.ErrClaimLost, Message: "activity was reclaimed by another execution"}
+			return &storage.StorageError{Kind: storage.ErrClaimLost, Message: "activity was cancelled or reclaimed by another execution"}
 		}
 	}
 	return nil
@@ -73,11 +73,13 @@ func (q *attemptQueue) EnqueueIdempotent(ctx context.Context, a *activity) (*sto
 // heartbeat renews the claim every interval until ctx ends or the claim is
 // lost, when it calls revoke with the ErrClaimLost error. A failed renewal is
 // retried on the next beat: the lease already covers the handler's whole
-// timeout, so a shorter outage costs nothing.
+// timeout, so a shorter outage costs nothing. When the backend is a
+// storage.ResultNotifier, a hint that the activity's own result was stored
+// (a cancel stores one) beats at once, so a cancelled handler stops promptly.
 //
-// Beats run on a timer, not a goroutine per activity. The returned stop waits
-// for a beat in progress, so no renewal races the acknowledgement after it (a
-// late beat would find the claim released and report it lost).
+// Beats run on a timer. The returned stop waits for a beat in progress, so no
+// renewal races the acknowledgement after it (a late beat would find the
+// claim released and report it lost).
 func (q *attemptQueue) heartbeat(ctx context.Context, interval time.Duration, revoke context.CancelCauseFunc) (stop func()) {
 	if _, ok := q.backend.(storage.AttemptLeaseStorage); !ok {
 		return func() {}
@@ -117,6 +119,24 @@ func (q *attemptQueue) heartbeat(ctx context.Context, interval time.Duration, re
 	mu.Lock()
 	timer = time.AfterFunc(interval, beat)
 	mu.Unlock()
+	if n, ok := q.backend.(storage.ResultNotifier); ok {
+		hint, stopHint := n.NotifyResult(q.owner)
+		go func() {
+			defer stopHint()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-hint:
+					mu.Lock()
+					if !stopped {
+						timer.Reset(0)
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
 	return func() {
 		cancel()
 		mu.Lock()

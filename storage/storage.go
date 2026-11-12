@@ -245,6 +245,16 @@ type ResultWaiter interface {
 	WaitForResult(ctx context.Context, activityID uuid.UUID) (*ActivityResult, error)
 }
 
+// ResultNotifier is an optional capability: hints that a result for an id may
+// have been stored, in this process or another sharing the database. The
+// engine uses it to stop a handler promptly when its activity is cancelled
+// (a cancel stores the activity's error result): on a hint it renews the
+// claim at once instead of at the next heartbeat. Hints may be lost or
+// spurious, so consumers recheck stored state. stop ends the subscription.
+type ResultNotifier interface {
+	NotifyResult(id uuid.UUID) (hint <-chan struct{}, stop func())
+}
+
 // QueueStorage defines core queue operations.
 type QueueStorage interface {
 	ResultStorage

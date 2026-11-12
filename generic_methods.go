@@ -21,3 +21,9 @@ func (c ActivityContext) RunStep[R any](name string, fn Step[R]) (R, error) {
 func (w *ActivityExecutor) Activity[T any]() *ActivityBuilder {
 	return Activity[T](w)
 }
+
+// Activity starts a submission of the activity served by handler type T;
+// the same call as Activity[T](c).
+func (c *Client) Activity[T any]() *ActivityBuilder {
+	return Activity[T](c)
+}

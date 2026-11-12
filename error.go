@@ -62,9 +62,14 @@ const (
 	// ErrSignalTimeoutW: WaitForSignal timed out. Not retryable: a retry
 	// replays the stored deadline and times out again.
 	ErrSignalTimeoutW
-	// ErrActivityNotFoundW: a signal's target doesn't exist (never enqueued,
-	// or swept by retention).
+	// ErrActivityNotFoundW: the activity doesn't exist (never enqueued, or
+	// swept by retention).
 	ErrActivityNotFoundW
+	// ErrActivityCancelled: the awaited activity was cancelled. Its Message
+	// is the stored cancellation, as for any other failed result.
+	ErrActivityCancelled
+	// ErrCommandConflict: a command id was reused with different input.
+	ErrCommandConflict
 )
 
 // WorkerError is an error from the engine.
@@ -77,7 +82,7 @@ type WorkerError struct {
 func (e *WorkerError) Error() string {
 	prefix := ""
 	switch e.Kind {
-	case ErrCustom:
+	case ErrCustom, ErrActivityCancelled:
 		return e.Message
 	case ErrQueue:
 		prefix = "Activity queue error"
@@ -112,7 +117,9 @@ func (e *WorkerError) Error() string {
 	case ErrSignalTimeoutW:
 		prefix = "Signal wait timed out"
 	case ErrActivityNotFoundW:
-		prefix = "Signal target activity not found"
+		prefix = "Activity not found"
+	case ErrCommandConflict:
+		prefix = "Command id reused"
 	}
 	return fmt.Sprintf("%s: %s", prefix, e.Message)
 }
@@ -162,8 +169,23 @@ func IsSignalTimeout(err error) bool {
 	return ok && we.Kind == ErrSignalTimeoutW
 }
 
-// IsActivityNotFound reports whether err is a signal to an activity that
-// doesn't exist; deliverers usually treat it as already settled.
+// IsCancelled reports whether err is an awaited activity's cancellation
+// (Client.Cancel), as GetResult and Client.Result return it.
+func IsCancelled(err error) bool {
+	we, ok := IsWorkerError(err)
+	return ok && we.Kind == ErrActivityCancelled
+}
+
+// IsCommandConflict reports whether err is a management command rejected
+// because its command id (WithCommandID) was already used with other input.
+func IsCommandConflict(err error) bool {
+	we, ok := IsWorkerError(err)
+	return ok && we.Kind == ErrCommandConflict
+}
+
+// IsActivityNotFound reports whether err is a signal to, or Client.Get of,
+// an activity that doesn't exist; signal deliverers usually treat it as
+// already settled.
 func IsActivityNotFound(err error) bool {
 	we, ok := IsWorkerError(err)
 	return ok && we.Kind == ErrActivityNotFoundW
