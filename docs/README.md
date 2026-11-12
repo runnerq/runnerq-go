@@ -10,6 +10,7 @@ are the deeper reference.
 - **[Workflows & Activities](workflows.md)** — handlers, the activity context, spawning child activities, getting results, awaiting across processes.
 - **[Durable Execution](durable-execution.md)** — the core: `Step`, `runnerq.RunStep`, `ctx.Sleep`, `WaitForSignal`, how parents park and resume, and versioning across deploys.
 - **[Retries & Dead Letter](retries-and-dead-letter.md)** — error types, backoff, delivery semantics, lease recovery, the dead-letter queue.
+- **[Schedules](schedules.md)** — cron schedules: declaring, managing, time zones and daylight saving, catch-up.
 - **[Configuration](configuration.md)** — builder options, defaults, lease/pool tuning, scheduling, workload isolation, retention.
 - **[Managing work](managing-work.md)** — `runnerq.Client`: submit, signal and await without an engine; get and list activities; cancel (reaching running handlers), retry, run now, reschedule, set priority, delete.
 - **[Observability](observability.md)** — reading activities from code, worker snapshots, metrics.

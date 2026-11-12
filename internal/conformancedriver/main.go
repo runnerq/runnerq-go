@@ -108,6 +108,11 @@ type args struct {
 	Cascade       bool                 `json:"cascade"`
 	ResetAttempts bool                 `json:"reset_attempts"`
 	At            time.Time            `json:"at"`
+
+	Cron         string `json:"cron"`
+	Timezone     string `json:"timezone"`
+	CatchUp      string `json:"catch_up"`
+	CatchUpLimit int    `json:"catch_up_limit"`
 }
 
 var behaviors = map[string]storage.IdempotencyBehavior{
@@ -187,6 +192,40 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 			Failed:    time.Duration(a.FailedS * float64(time.Second)),
 			Events:    time.Duration(a.EventsS * float64(time.Second)),
 		}, max(a.Batch, 1))
+		return map[string]any{"count": n}, err
+	case "upsert_schedule":
+		o := storage.ScheduleOptions{Priority: storage.PriorityNormal, MaxRetries: 3, TimeoutSeconds: 30, RetryDelaySeconds: 1, Metadata: a.Metadata}
+		if a.Priority != nil {
+			o.Priority = storage.ActivityPriority(*a.Priority)
+		}
+		if a.MaxAttempts != nil {
+			o.MaxRetries = *a.MaxAttempts
+		}
+		if a.TimeoutS != nil {
+			o.TimeoutSeconds = *a.TimeoutS
+		}
+		return nil, d.b.UpsertSchedule(ctx, storage.Schedule{
+			Name: a.Name, Cron: a.Cron, Timezone: a.Timezone, ActivityType: a.Type, Payload: a.Payload,
+			Options: o, CatchUp: storage.CatchUp(a.CatchUp), CatchUpLimit: a.CatchUpLimit,
+		})
+	case "pause_schedule":
+		return nil, d.b.PauseSchedule(ctx, a.Name)
+	case "resume_schedule":
+		return nil, d.b.ResumeSchedule(ctx, a.Name)
+	case "delete_schedule":
+		return nil, d.b.DeleteSchedule(ctx, a.Name)
+	case "trigger_schedule":
+		id, err := d.b.TriggerSchedule(ctx, a.Name)
+		return map[string]any{"id": id}, err
+	case "list_schedules":
+		list, err := d.b.ListSchedules(ctx)
+		names := []string{}
+		for _, s := range list {
+			names = append(names, s.Name)
+		}
+		return map[string]any{"names": names}, err
+	case "fire_schedules":
+		n, err := d.b.FireDueSchedules(ctx, max(a.Limit, 100))
 		return map[string]any{"count": n}, err
 	case "get_result":
 		r, err := d.b.GetResult(ctx, a.ID)

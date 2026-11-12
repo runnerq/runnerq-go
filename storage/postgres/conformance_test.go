@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,6 +25,13 @@ func (conformanceHarness) ExpireLease(ctx context.Context, b storage.Storage, id
 		UPDATE runnerq_activities
 		SET lease_deadline_ms = (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint - 10000
 		WHERE id = $1`, id)
+	return err
+}
+
+func (conformanceHarness) SetNextFireAt(b storage.Storage, name string, at time.Time) error {
+	p := b.(*PostgresBackend)
+	_, err := p.pool.Exec(context.Background(), `UPDATE runnerq_schedules SET next_fire_at = $3
+		WHERE queue_name = $1 AND name = $2`, p.queueName, name, at)
 	return err
 }
 

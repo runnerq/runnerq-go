@@ -69,6 +69,12 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   Go/TypeScript fleet replays each other's commands.
 - `runnerq.Activity[T](client)`: the package function takes a `Spawner`
   (`*ActivityExecutor` or `*Client`).
+- Cron schedules: `engine.RegisterSchedule` (upserted on start) and
+  `runnerq.NewSchedules` / `engine.Schedules()` (upsert, get, list, pause,
+  resume, trigger, delete). Each tick fires exactly once across a fleet,
+  including a mixed Go/TypeScript one; the dialect, time zones, daylight
+  saving and catch-up follow runnerq-spec's `schedules.md`. Needs schema
+  migration `0003_schedules`.
 
 ### Changed
 

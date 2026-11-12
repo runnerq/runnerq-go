@@ -62,6 +62,9 @@ type WorkerEngine struct {
 
 	changes  executor.Signal
 	announce *announcer
+
+	schedules        []Schedule    // guarded by mu; upserted by Start
+	scheduleInterval time.Duration // overrides scheduleFireInterval when set
 }
 
 // Interrupt stops the handler running activityID here, as if its claim had
@@ -375,6 +378,7 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	e.startedAt = time.Now().UTC()
 	e.servedTypes = slices.Clone(types)
 	observers := slices.Clone(e.observers)
+	schedules := slices.Clone(e.schedules)
 	e.running.Store(true)
 	// Parent cancellation stops intake below. Handler and persistence lifetime
 	// ends after the drain, including when the caller uses a signal context.
@@ -386,6 +390,13 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	shutdownCh := e.shutdownCh
 	e.mu.Unlock()
 	defer engineCancel()
+	if err := e.upsertSchedules(ctx, schedules); err != nil {
+		e.mu.Lock()
+		e.active = false
+		e.running.Store(false)
+		e.mu.Unlock()
+		return err
+	}
 	slog.Info("Starting worker engine", "queue", e.tel.queueName(), "max_concurrent_activities", e.config.MaxConcurrentActivities)
 	for _, o := range observers {
 		o.ExecutorStarted(e)
@@ -403,6 +414,12 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	if !selfMaintained {
 		wg.Go(func() {
 			e.runReaperProcessor(intakeCtx)
+		})
+	}
+
+	if store, ok := e.backend.(storage.ScheduleStorage); ok {
+		wg.Go(func() {
+			e.runScheduleFirer(intakeCtx, store)
 		})
 	}
 
