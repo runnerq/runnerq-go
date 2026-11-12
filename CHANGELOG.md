@@ -75,6 +75,11 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   including a mixed Go/TypeScript one; the dialect, time zones, daylight
   saving and catch-up follow runnerq-spec's `schedules.md`. Needs schema
   migration `0003_schedules`.
+- `runnerq.NewClient(backend, opts...)` takes options; `WithTracer(t)`
+  traces a standalone client's submissions (an enqueue span and its stored
+  traceparent) and signals, as an engine's tracer does. `Client.Signal` and
+  `Client.SignalByKey` on an engine's client are now traced by the engine's
+  tracer, like `engine.Signal`.
 
 ### Changed
 
