@@ -345,3 +345,77 @@ func TestClientWithoutCommandStorage(t *testing.T) {
 
 // queueOnly is a storage.Storage with no optional capabilities.
 type queueOnly struct{ storage.Storage }
+
+// A client given a tracer traces its submissions and signals as an engine
+// does: an enqueue span under the caller's span, whose traceparent the
+// activity stores, and a signal-send span per signal.
+func TestClientTracer(t *testing.T) {
+	dsn := contractDSN(t)
+	queue := contractQueue()
+	backend := contractBackend(t, dsn, queue)
+	tracer := &fakeTracer{}
+	client := NewClient(backend, WithTracer(tracer))
+
+	ctx, endCaller := tracer.Start(context.Background(), "caller", "")
+	defer endCaller(OutcomeOk, nil)
+	caller := tracer.Traceparent(ctx)
+	fut, err := client.ActivityNamed("report").Payload(json.RawMessage(`{}`)).
+		IdempotencyKeyOption("order-1", ReturnExisting).Execute(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueues := tracer.named(SpanEnqueue)
+	if len(enqueues) != 1 {
+		t.Fatalf("enqueue spans %+v", enqueues)
+	}
+	enq := enqueues[0]
+	if enq.parent != caller || enq.outcome != OutcomeEnqueued || enq.attrs[AttrQueue] != queue ||
+		enq.attrs[AttrActivityType] != "report" || enq.attrs[AttrActivityID] != fut.ActivityID().String() {
+		t.Fatalf("enqueue span %+v, caller %s", enq, caller)
+	}
+	snap, err := backend.GetActivity(ctx, fut.ActivityID())
+	if err != nil || snap.Metadata[MetadataTraceparent] != enq.traceparent {
+		t.Fatalf("stored traceparent %v, enqueue span %s (%v)", snap.Metadata, enq.traceparent, err)
+	}
+
+	if err := client.Signal(ctx, fut.ActivityID(), "approve", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SignalByKey(ctx, "report", "order-1", "ship", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Signal(ctx, uuid.New(), "approve", nil); !IsActivityNotFound(err) {
+		t.Fatalf("signal to a missing activity: %v", err)
+	}
+	sends := tracer.named(SpanSignalSend)
+	want := []struct{ name, outcome string }{{"approve", OutcomeSent}, {"ship", OutcomeSent}, {"approve", OutcomeError}}
+	if len(sends) != len(want) {
+		t.Fatalf("signal spans %+v", sends)
+	}
+	for i, w := range want {
+		s := sends[i]
+		if s.parent != caller || s.attrs[AttrSignalName] != w.name || s.outcome != w.outcome || !s.ended {
+			t.Errorf("signal span %d = %+v, want %s %s under %s", i, s, w.name, w.outcome, caller)
+		}
+	}
+	if sends[0].attrs[AttrActivityID] != fut.ActivityID().String() || sends[1].attrs[AttrActivityID] != fut.ActivityID().String() {
+		t.Errorf("signal spans' activity ids %v, %v", sends[0].attrs[AttrActivityID], sends[1].attrs[AttrActivityID])
+	}
+}
+
+// An engine's client signals through the engine's tracer.
+func TestEngineClientSignalTraced(t *testing.T) {
+	tracer := &fakeTracer{}
+	rig := newStepsRig(t, func(e *WorkerEngine) { e.SetTracer(tracer) })
+	client := rig.engine.Client()
+	fut, err := client.ActivityNamed("report").Payload(json.RawMessage(`{}`)).Execute(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Signal(context.Background(), fut.ActivityID(), "approve", nil); err != nil {
+		t.Fatal(err)
+	}
+	if enq, sends := tracer.named(SpanEnqueue), tracer.named(SpanSignalSend); len(enq) != 1 || len(sends) != 1 || sends[0].outcome != OutcomeSent {
+		t.Fatalf("enqueue spans %+v, signal spans %+v", enq, sends)
+	}
+}
