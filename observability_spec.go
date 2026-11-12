@@ -50,6 +50,9 @@ const (
 	// MetricActivityTreesSwept is a counter ({tree}): terminal workflow trees
 	// deleted by retention.
 	MetricActivityTreesSwept = "activity_trees_swept"
+	// MetricScheduleFires is a counter ({activity}): activities enqueued by
+	// firing due schedules.
+	MetricScheduleFires = "schedule_fires"
 	// MetricStorageRetry is a counter ({retry}): storage writes made for an
 	// attempt (completion, failure, park, checkpoint, spawn) that failed
 	// transiently and are being retried.
@@ -123,6 +126,7 @@ var MetricCatalog = []MetricInfo{
 	{Name: MetricActivityHeartbeatFailed, Kind: MetricCounter, Unit: "{renewal}", Labels: []string{LabelQueue, LabelActivityType}, Description: "Claim renewals that failed and will be retried on the next beat."},
 	{Name: MetricActivityYielded, Kind: MetricCounter, Unit: "{attempt}", Labels: []string{LabelQueue, LabelActivityType}, Description: "Attempts that parked the activity for a durable wait (sleep, signal or awaited result)."},
 	{Name: MetricActivityTreesSwept, Kind: MetricCounter, Unit: "{tree}", Labels: []string{LabelQueue}, Description: "Terminal workflow trees deleted by retention."},
+	{Name: MetricScheduleFires, Kind: MetricCounter, Unit: "{activity}", Labels: []string{LabelQueue}, Description: "Activities enqueued by firing due schedules."},
 	{Name: MetricStorageRetry, Kind: MetricCounter, Unit: "{retry}", Labels: []string{LabelQueue, LabelActivityType}, Description: "Storage writes made for an attempt (completion, failure, park, checkpoint, spawn) that failed transiently and are being retried."},
 	{Name: MetricActivityClaimLag, Kind: MetricHistogram, Unit: "s", Labels: []string{LabelQueue, LabelActivityType}, Description: "How long an activity waited from when it was due until a worker started it."},
 	{Name: MetricActivityExecution, Kind: MetricHistogram, Unit: "s", Labels: []string{LabelQueue, LabelActivityType}, Description: "How long an attempt took on this worker, from its start until its outcome was recorded."},

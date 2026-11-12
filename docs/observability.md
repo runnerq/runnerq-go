@@ -72,6 +72,7 @@ gauges. The default is `runnerq.NoopMetrics`.
 | `activity_heartbeat_failed` | counter | a claim renewal failed and will be retried on the next beat |
 | `activity_yielded` | counter | parked for a durable wait (sleep/signal/await) |
 | `activity_trees_swept` | counter | workflow trees deleted by retention (`queue` label only) |
+| `schedule_fires` | counter | activities enqueued by firing due schedules (`queue` label only) |
 | `storage_retry` | counter | a storage write (completion, failure, park, checkpoint, dependency registration) failed transiently and is being retried |
 | `activity_claim_lag` | histogram (s) | how long an activity waited, from when it was due, until a worker started it |
 | `activity_execution` | histogram (s) | how long an attempt took here, until its outcome was recorded |
