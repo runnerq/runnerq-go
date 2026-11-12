@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // Idempotency: a key is claimed and its activity enqueued as one atomic

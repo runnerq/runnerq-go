@@ -39,9 +39,9 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/alob-mtc/runnerq-go"
-	"github.com/alob-mtc/runnerq-go/conductor/internal/wire"
-	"github.com/alob-mtc/runnerq-go/executor"
+	"github.com/runnerq/runnerq-go"
+	"github.com/runnerq/runnerq-go/conductor/internal/wire"
+	"github.com/runnerq/runnerq-go/executor"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/executor"
+	"github.com/runnerq/runnerq-go/executor"
 )
 
 // announcer holds an engine's executor.Announcer. Its methods are no-ops

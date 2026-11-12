@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 const (

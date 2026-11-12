@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/executor"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/executor"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // observingBackend is a lifecycle backend that is an executor.Observer.

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alob-mtc/runnerq-go/conductor/internal/wire"
+	"github.com/runnerq/runnerq-go/conductor/internal/wire"
 )
 
 // wireError is a protocol error: a handler returns one to choose the code.

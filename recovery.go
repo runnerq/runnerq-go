@@ -7,7 +7,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 const storageAttemptTimeout = 5 * time.Second

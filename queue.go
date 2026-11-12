@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // ResultState says whether a stored result is a success or a failure.

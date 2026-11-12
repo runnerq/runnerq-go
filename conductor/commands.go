@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/conductor/internal/wire"
-	"github.com/alob-mtc/runnerq-go/storage"
+	"github.com/runnerq/runnerq-go/conductor/internal/wire"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 var commandKinds = map[string]storage.CommandKind{

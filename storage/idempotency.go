@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alob-mtc/runnerq-go/internal/spec"
+	"github.com/runnerq/runnerq-go/internal/spec"
 )
 
 const businessKeyPrefix = spec.BusinessKeyPrefix

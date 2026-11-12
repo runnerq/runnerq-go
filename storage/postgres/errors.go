@@ -6,9 +6,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/alob-mtc/runnerq-go/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // databaseError preserves the driver cause. Only known transient failures may
