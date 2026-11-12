@@ -122,7 +122,7 @@ func testConcurrentClaimersNeverOverlap(t *testing.T, h Harness) {
 		wg.Go(func() {
 			for n := 0; ; n++ {
 				token := fmt.Sprintf("claimer-%d-%d", i, n)
-				got, err := b.Dequeue(s.ctx, token, 0, nil)
+				got, err := b.Dequeue(s.ctx, token, 0, nil, nil)
 				if err != nil {
 					t.Errorf("claimer %d: %v", i, err)
 					return
@@ -150,7 +150,7 @@ func testConcurrentClaimersNeverOverlap(t *testing.T, h Harness) {
 func testBlockingClaimTimesOut(t *testing.T, h Harness) {
 	s := newSuite(t, h)
 	start := time.Now()
-	got, err := s.b.Dequeue(s.ctx, "w", 500*time.Millisecond, nil)
+	got, err := s.b.Dequeue(s.ctx, "w", 500*time.Millisecond, nil, nil)
 	took := time.Since(start)
 	if err != nil || got != nil {
 		t.Fatalf("empty blocking claim: got=%v err=%v", got, err)
@@ -174,7 +174,7 @@ func testBlockingClaimWakesAcrossProcesses(t *testing.T, h Harness) {
 		ch := make(chan outcome, 1)
 		start := time.Now()
 		go func() {
-			got, err := s.b.Dequeue(s.ctx, "parked-"+uuid.NewString(), wait, nil)
+			got, err := s.b.Dequeue(s.ctx, "parked-"+uuid.NewString(), wait, nil, nil)
 			ch <- outcome{got, err, time.Since(start)}
 		}()
 		time.Sleep(300 * time.Millisecond) // let it park
@@ -217,7 +217,7 @@ func testBlockingClaimCancel(t *testing.T, h Harness) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.b.Dequeue(ctx, "w", wait, nil)
+		_, err := s.b.Dequeue(ctx, "w", wait, nil, nil)
 		done <- err
 	}()
 	time.Sleep(200 * time.Millisecond)
@@ -235,7 +235,7 @@ func testBatchClaim(t *testing.T, h Harness) {
 	for _, p := range []storage.ActivityPriority{storage.PriorityLow, storage.PriorityCritical, storage.PriorityNormal, storage.PriorityHigh, storage.PriorityLow} {
 		s.enqueue(activity(withPriority(p)))
 	}
-	claims, err := bq.DequeueBatch(s.ctx, "batch-1", 3, 0, nil)
+	claims, err := bq.DequeueBatch(s.ctx, "batch-1", 3, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,25 +262,25 @@ func testBatchClaim(t *testing.T, h Harness) {
 	if err := s.b.AckSuccess(s.ctx, claims[0].Activity.ID, nil, claims[0].LeaseID); err != nil {
 		t.Fatalf("ack with own token: %v", err)
 	}
-	rest, err := bq.DequeueBatch(s.ctx, "batch-2", 10, 0, nil)
+	rest, err := bq.DequeueBatch(s.ctx, "batch-2", 10, 0, nil, nil)
 	if err != nil || len(rest) != 2 {
 		t.Fatalf("remaining claim: n=%d err=%v, want the 2 low rows", len(rest), err)
 	}
-	if none, err := bq.DequeueBatch(s.ctx, "batch-3", 10, 0, nil); err != nil || len(none) != 0 {
+	if none, err := bq.DequeueBatch(s.ctx, "batch-3", 10, 0, nil, nil); err != nil || len(none) != 0 {
 		t.Fatalf("empty claim: n=%d err=%v", len(none), err)
 	}
-	if none, err := bq.DequeueBatch(s.ctx, "batch-4", 0, time.Second, nil); err != nil || len(none) != 0 {
+	if none, err := bq.DequeueBatch(s.ctx, "batch-4", 0, time.Second, nil, nil); err != nil || len(none) != 0 {
 		t.Fatalf("limit-0 claim: n=%d err=%v, want an immediate empty result", len(none), err)
 	}
 	// Type filter forms.
 	for _, typ := range []string{"a", "a", "b", "b", "c"} {
 		s.enqueue(activity(withType(typ)))
 	}
-	one, err := bq.DequeueBatch(s.ctx, "one", 10, 0, []string{"a"})
+	one, err := bq.DequeueBatch(s.ctx, "one", 10, 0, []string{"a"}, nil)
 	if err != nil || len(one) != 2 || one[0].Activity.ActivityType != "a" || one[1].Activity.ActivityType != "a" {
 		t.Fatalf("one-type batch: %v %v", one, err)
 	}
-	many, err := bq.DequeueBatch(s.ctx, "many", 2, 0, []string{"b", "c"})
+	many, err := bq.DequeueBatch(s.ctx, "many", 2, 0, []string{"b", "c"}, nil)
 	if err != nil || len(many) != 2 {
 		t.Fatalf("many-type batch: n=%d err=%v", len(many), err)
 	}
@@ -306,7 +306,7 @@ func testBatchClaimersNeverOverlap(t *testing.T, h Harness) {
 	for i, b := range handles {
 		wg.Go(func() {
 			for round := 0; ; round++ {
-				claims, err := b.DequeueBatch(s.ctx, fmt.Sprintf("claimer-%d-%d", i, round), 7, 0, nil)
+				claims, err := b.DequeueBatch(s.ctx, fmt.Sprintf("claimer-%d-%d", i, round), 7, 0, nil, nil)
 				if err != nil {
 					t.Errorf("claimer %d: %v", i, err)
 					return
@@ -343,7 +343,7 @@ func testBatchClaimBlocks(t *testing.T, h Harness) {
 	done := make(chan outcome, 1)
 	start := time.Now()
 	go func() {
-		claims, err := bq.DequeueBatch(s.ctx, "blocker", 5, wait, nil)
+		claims, err := bq.DequeueBatch(s.ctx, "blocker", 5, wait, nil, nil)
 		done <- outcome{claims, err, time.Since(start)}
 	}()
 	time.Sleep(300 * time.Millisecond)

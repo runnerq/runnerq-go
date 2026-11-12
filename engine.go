@@ -125,7 +125,8 @@ func (e *WorkerEngine) Snapshot() executor.Snapshot {
 			StartedAt:      started,
 			Hostname:       e.hostname,
 			SDK:            e.sdk,
-			Labels:         maps.Clone(e.config.Labels),
+			Labels:         e.labels(),
+			Version:        e.config.Version,
 		},
 		State:    executor.State{Draining: e.Draining()},
 		Counters: e.counts.counters(),
@@ -135,6 +136,19 @@ func (e *WorkerEngine) Snapshot() executor.Snapshot {
 		snap.State.Running = append(snap.State.Running, executor.Running{ID: a.ID, Type: a.Type, Attempt: a.Attempt, StartedAt: a.StartedAt})
 	}
 	return snap
+}
+
+// labels are the executor's labels: the configured ones and, with a
+// Version, "version".
+func (e *WorkerEngine) labels() map[string]string {
+	l := maps.Clone(e.config.Labels)
+	if e.config.Version != "" {
+		if l == nil {
+			l = map[string]string{}
+		}
+		l[LabelVersion] = e.config.Version
+	}
+	return l
 }
 
 // Changed returns a channel closed at the engine's next change: an activity
@@ -326,7 +340,19 @@ func isNilHandler(handler ActivityHandler) bool {
 // handler's context it spawns children of that handler's activity instead
 // (see ActivityExecutor).
 func (e *WorkerEngine) GetActivityExecutor() *ActivityExecutor {
-	return newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce, e.tel)
+	return e.newExecutor(e.queue)
+}
+
+// newExecutor spawns into queue, pinning roots to the engine's Version.
+func (e *WorkerEngine) newExecutor(queue activityQueue) *ActivityExecutor {
+	x := newActivityExecutor(queue, e.config.MaxActivityDepth, e.announce, e.tel)
+	x.version = e.config.Version
+	return x
+}
+
+// Version is the code version the engine runs, or "" (WorkerConfig.Version).
+func (e *WorkerEngine) Version() string {
+	return e.config.Version
 }
 
 // Start runs the engine until ctx ends, Stop is called or the process gets
@@ -371,8 +397,12 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 		e.mu.Unlock()
 		return &WorkerError{Kind: ErrConfiguration, Message: "this storage applies retention itself: configure retention there"}
 	}
-	if q, ok := e.queue.(activityTypeFilter); ok {
-		q.setActivityTypes(types)
+	if err := validateVersions(&e.config); err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	if q, ok := e.queue.(claimFilter); ok {
+		q.setClaimFilter(types, e.config.servedVersions())
 	}
 	e.active = true
 	e.startedAt = time.Now().UTC()
@@ -711,7 +741,7 @@ func (e *WorkerEngine) runAttempt(ctx context.Context, act *activity, traceparen
 	// The attempt queue on the context lets in-handler GetResult calls
 	// yield-park this activity.
 	attemptQ := &attemptQueue{activityQueue: e.queue, backend: e.backend, owner: act.ID, worker: workerLabel, persistenceCtx: ctx, metrics: e.metrics, labels: labels, awaitGrace: e.awaitGrace}
-	scopedExecutor := newActivityExecutor(attemptQ, e.config.MaxActivityDepth, e.announce, e.tel).scopedForChild(act)
+	scopedExecutor := e.newExecutor(attemptQ).scopedForChild(act)
 	timeoutCtx = context.WithValue(timeoutCtx, attemptQueueKey{}, attemptQ)
 	timeoutCtx = context.WithValue(timeoutCtx, childScopeKey{}, scopedExecutor)
 	if traceparent != "" {
@@ -939,7 +969,7 @@ func (e *WorkerEngine) callDeadLetter(ctx context.Context, act *activity, handle
 		RetryCount:       0,
 		Metadata:         make(map[string]string),
 		Ctx:              ctx,
-		ActivityExecutor: newActivityExecutor(e.queue, e.config.MaxActivityDepth, e.announce, e.tel).scopedForChild(act),
+		ActivityExecutor: e.newExecutor(e.queue).scopedForChild(act),
 		ParentActivityID: act.ParentActivityID,
 		RootActivityID:   act.RootActivityID,
 		Depth:            act.Depth,
@@ -1055,6 +1085,8 @@ type WorkerEngineBuilder struct {
 	activityTypes []string
 	shutdownGrace *time.Duration
 	retention     *RetentionConfig
+	version       string
+	serves        []string
 }
 
 // Builder starts configuring a WorkerEngine from DefaultWorkerConfig.
@@ -1118,6 +1150,19 @@ func (b *WorkerEngineBuilder) GaugeInterval(d time.Duration) *WorkerEngineBuilde
 	return b
 }
 
+// Version sets the code version this engine runs (WorkerConfig.Version):
+// it pins the roots it submits and claims only work it serves.
+func (b *WorkerEngineBuilder) Version(v string) *WorkerEngineBuilder {
+	b.version = v
+	return b
+}
+
+// Serves adds versions the engine claims besides its own (WorkerConfig.Serves).
+func (b *WorkerEngineBuilder) Serves(versions ...string) *WorkerEngineBuilder {
+	b.serves = append(b.serves, versions...)
+	return b
+}
+
 // Backend sets the storage backend; required.
 func (b *WorkerEngineBuilder) Backend(backend storage.Storage) *WorkerEngineBuilder {
 	b.backend = backend
@@ -1160,6 +1205,7 @@ func (b *WorkerEngineBuilder) Build() (*WorkerEngine, error) {
 	config.ActivityTypes = b.activityTypes
 	config.Retention = b.retention
 	config.GaugeInterval = b.gaugeInterval
+	config.Version, config.Serves = b.version, b.serves
 	if b.shutdownGrace != nil {
 		secs := max(uint64(b.shutdownGrace.Seconds()), 1)
 		config.ShutdownGraceSeconds = &secs

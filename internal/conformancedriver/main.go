@@ -78,6 +78,10 @@ type args struct {
 	Types   []string `json:"types"`
 	Limit   int      `json:"limit"`
 	LeaseMS int64    `json:"lease_ms"`
+	// Version stamps a submission, a schedule or a repin's target;
+	// Versions are the versions a claim serves.
+	Version  string   `json:"version"`
+	Versions []string `json:"versions"`
 
 	Claim     fence           `json:"claim"`
 	Value     json.RawMessage `json:"value"`
@@ -147,7 +151,7 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 		}
 		d.b.SetLeaseMS(lease)
 		limit := max(a.Limit, 1)
-		got, err := d.b.DequeueBatch(ctx, "conformance:"+uuid.NewString(), limit, 0, a.Types)
+		got, err := d.b.DequeueBatch(ctx, "conformance:"+uuid.NewString(), limit, 0, a.Types, a.Versions)
 		claims := make([]fence, len(got))
 		for i, c := range got {
 			claims[i] = fence{ID: c.Activity.ID, Token: c.LeaseID}
@@ -194,7 +198,7 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 		}, max(a.Batch, 1))
 		return map[string]any{"count": n}, err
 	case "upsert_schedule":
-		o := storage.ScheduleOptions{Priority: storage.PriorityNormal, MaxRetries: 3, TimeoutSeconds: 30, RetryDelaySeconds: 1, Metadata: a.Metadata}
+		o := storage.ScheduleOptions{Priority: storage.PriorityNormal, MaxRetries: 3, TimeoutSeconds: 30, RetryDelaySeconds: 1, Metadata: a.Metadata, CodeVersion: a.Version}
 		if a.Priority != nil {
 			o.Priority = storage.ActivityPriority(*a.Priority)
 		}
@@ -248,7 +252,7 @@ func (d *driver) command(ctx context.Context, a args) (any, error) {
 		ID: a.CommandID, Fingerprint: a.Fingerprint, Kind: storage.CommandKind(a.Kind),
 		Target: storage.CommandTarget{IDs: a.IDs, Filter: a.Filter, Max: a.Max},
 		DryRun: a.DryRun, Reason: a.Reason, CascadeChildren: a.Cascade, ResetAttempts: a.ResetAttempts,
-		At: a.At, SignalName: a.Name, SignalPayload: a.Payload,
+		At: a.At, SignalName: a.Name, SignalPayload: a.Payload, Version: a.Version,
 	}
 	if a.Priority != nil {
 		cmd.Priority = storage.ActivityPriority(*a.Priority)
@@ -280,7 +284,7 @@ func (d *driver) submit(ctx context.Context, a args) (any, error) {
 		ID: a.ID, ActivityType: a.Type, Payload: a.Payload,
 		Priority: storage.PriorityNormal, MaxRetries: 3, TimeoutSeconds: 30,
 		RetryDelaySeconds: 1, Metadata: a.Metadata, CreatedAt: time.Now().UTC(),
-		ParentActivityID: a.Parent, RootActivityID: a.ID, Depth: a.Depth,
+		ParentActivityID: a.Parent, RootActivityID: a.ID, Depth: a.Depth, CodeVersion: a.Version,
 	}
 	if a.Priority != nil {
 		q.Priority = storage.ActivityPriority(*a.Priority)

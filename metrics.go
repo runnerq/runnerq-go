@@ -24,6 +24,9 @@ type MetricLabels struct {
 	// Status is a canonical activity status (storage.RecordStatus*), on
 	// MetricQueueDepth only.
 	Status string
+	// Version is a code version, on MetricActivitiesByVersion and
+	// MetricActivitiesUnserved only; empty for unstamped activities.
+	Version string
 }
 
 // LabeledMetricsSink receives every metric of MetricCatalog with its labels,

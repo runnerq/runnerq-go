@@ -116,14 +116,14 @@ func TestClaimsSkipInputsGoCannotRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claimed, err := b.Dequeue(ctx, "w1", 0, nil)
+	claimed, err := b.Dequeue(ctx, "w1", 0, nil, nil)
 	if err != nil || claimed == nil || claimed.ID != plain.ID {
 		t.Fatalf("claimed %+v, %v; want the plain-JSON activity", claimed, err)
 	}
-	if again, err := b.Dequeue(ctx, "w2", 0, nil); err != nil || again != nil {
+	if again, err := b.Dequeue(ctx, "w2", 0, nil, nil); err != nil || again != nil {
 		t.Fatalf("claimed %+v, %v; want nothing", again, err)
 	}
-	if batch, err := b.DequeueBatch(ctx, "engine:batch:1", 10, 0, nil); err != nil || len(batch) != 0 {
+	if batch, err := b.DequeueBatch(ctx, "engine:batch:1", 10, 0, nil, nil); err != nil || len(batch) != 0 {
 		t.Fatalf("batch claimed %d, %v; want nothing", len(batch), err)
 	}
 	if status, _ := activityStatus(t, b, native.ID); status != "pending" {
@@ -147,7 +147,7 @@ func TestDequeueBatchClaimsInDequeueOrderWithFencedTokens(t *testing.T) {
 		}
 	}
 
-	claims, err := b.DequeueBatch(ctx, "engine:batch:1", 3, 0, nil)
+	claims, err := b.DequeueBatch(ctx, "engine:batch:1", 3, 0, nil, nil)
 	if err != nil {
 		t.Fatalf("batch dequeue: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestDequeueBatchClaimsInDequeueOrderWithFencedTokens(t *testing.T) {
 		t.Fatalf("ack with own token: %v", err)
 	}
 
-	rest, err := b.DequeueBatch(ctx, "engine:batch:2", 10, 0, nil)
+	rest, err := b.DequeueBatch(ctx, "engine:batch:2", 10, 0, nil, nil)
 	if err != nil || len(rest) != 2 {
 		t.Fatalf("remaining claim: n=%d err=%v, want the 2 low-priority rows", len(rest), err)
 	}
@@ -188,10 +188,10 @@ func TestDequeueBatchClaimsInDequeueOrderWithFencedTokens(t *testing.T) {
 			t.Fatalf("remaining row priority = %d, want low", c.Activity.Priority)
 		}
 	}
-	if none, err := b.DequeueBatch(ctx, "engine:batch:3", 10, 0, nil); err != nil || len(none) != 0 {
+	if none, err := b.DequeueBatch(ctx, "engine:batch:3", 10, 0, nil, nil); err != nil || len(none) != 0 {
 		t.Fatalf("empty queue claim: n=%d err=%v, want none", len(none), err)
 	}
-	if none, err := b.DequeueBatch(ctx, "engine:batch:4", 0, time.Second, nil); err != nil || len(none) != 0 {
+	if none, err := b.DequeueBatch(ctx, "engine:batch:4", 0, time.Second, nil, nil); err != nil || len(none) != 0 {
 		t.Fatalf("limit 0 claim: n=%d err=%v, want an immediate empty result", len(none), err)
 	}
 }
@@ -206,7 +206,7 @@ func TestStaleBatchTokenCannotAck(t *testing.T) {
 	if err := b.Enqueue(ctx, a); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	stale, err := b.DequeueBatch(ctx, "stale", 1, 0, nil)
+	stale, err := b.DequeueBatch(ctx, "stale", 1, 0, nil, nil)
 	if err != nil || len(stale) != 1 {
 		t.Fatalf("first claim: n=%d err=%v", len(stale), err)
 	}
@@ -215,7 +215,7 @@ func TestStaleBatchTokenCannotAck(t *testing.T) {
 	if n, err := b.RequeueExpired(ctx, 10); err != nil || n != 1 {
 		t.Fatalf("requeue expired: n=%d err=%v", n, err)
 	}
-	fresh, err := b.DequeueBatch(ctx, "fresh", 1, 0, nil)
+	fresh, err := b.DequeueBatch(ctx, "fresh", 1, 0, nil, nil)
 	if err != nil || len(fresh) != 1 || fresh[0].Activity.ID != a.ID {
 		t.Fatalf("second claim: n=%d err=%v", len(fresh), err)
 	}
@@ -284,7 +284,7 @@ func TestLeaseUsesDBClockAndExtends(t *testing.T) {
 	if err := b.Enqueue(ctx, a); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if claimed, err := b.Dequeue(ctx, "w1", time.Second, nil); err != nil || claimed == nil {
+	if claimed, err := b.Dequeue(ctx, "w1", time.Second, nil, nil); err != nil || claimed == nil {
 		t.Fatalf("dequeue: claimed=%v err=%v", claimed, err)
 	}
 
@@ -333,7 +333,7 @@ func TestFailureDetailsKept(t *testing.T) {
 	if err := b.Enqueue(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	c, err := b.Dequeue(ctx, "w1", 0, nil)
+	c, err := b.Dequeue(ctx, "w1", 0, nil, nil)
 	if err != nil || c == nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestClaimSentBeforeCancelIsDelivered(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		claims, err := b.DequeueBatch(claimCtx, "w", 1, 0, []string{a.ActivityType})
+		claims, err := b.DequeueBatch(claimCtx, "w", 1, 0, []string{a.ActivityType}, nil)
 		done <- result{claims, err}
 	}()
 	waitUntil(t, func() bool {
@@ -418,7 +418,7 @@ func TestClaimSentBeforeCancelIsDelivered(t *testing.T) {
 	}
 
 	// A context that has already ended sends nothing.
-	if _, err := b.DequeueBatch(claimCtx, "w", 1, 0, nil); err == nil {
+	if _, err := b.DequeueBatch(claimCtx, "w", 1, 0, nil, nil); err == nil {
 		t.Fatal("claim on an ended context: want its error")
 	}
 }

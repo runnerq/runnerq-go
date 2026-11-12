@@ -79,23 +79,32 @@ func (s Schedule) stored() storage.Schedule {
 type Schedules struct {
 	store   storage.ScheduleStorage
 	backend storage.Storage
+	version string
 }
 
 // NewSchedules manages the schedules of backend's queue. It fails when the
-// backend does not implement storage.ScheduleStorage.
-func NewSchedules(backend storage.Storage) (*Schedules, error) {
+// backend does not implement storage.ScheduleStorage. With ClientVersion,
+// the schedules it upserts fire work pinned to that version.
+func NewSchedules(backend storage.Storage, opts ...ClientOption) (*Schedules, error) {
 	store, ok := backend.(storage.ScheduleStorage)
 	if !ok {
 		return nil, &WorkerError{Kind: ErrConfiguration, Message: fmt.Sprintf("storage %T does not support schedules", backend)}
 	}
-	return &Schedules{store: store, backend: backend}, nil
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return &Schedules{store: store, backend: backend, version: o.version}, nil
 }
 
 // Upsert creates the schedule or replaces its definition. A paused schedule
 // stays paused, and its next fire time is kept unless Cron or Timezone
-// changed.
+// changed. The definition records this manager's version, which the
+// schedule's fires are pinned to.
 func (m *Schedules) Upsert(ctx context.Context, s Schedule) error {
-	return m.store.UpsertSchedule(ctx, s.stored())
+	stored := s.stored()
+	stored.Options.CodeVersion = m.version
+	return m.store.UpsertSchedule(ctx, stored)
 }
 
 // Get returns a schedule as stored; a not-found error for an unknown name.
@@ -135,10 +144,10 @@ func (m *Schedules) Delete(ctx context.Context, name string) error {
 	return m.store.DeleteSchedule(ctx, name)
 }
 
-// Schedules manages the schedules of the engine's queue; nil when its
-// backend does not support schedules.
+// Schedules manages the schedules of the engine's queue, upserting them at
+// the engine's Version; nil when its backend does not support schedules.
 func (e *WorkerEngine) Schedules() *Schedules {
-	m, err := NewSchedules(e.backend)
+	m, err := NewSchedules(e.backend, ClientVersion(e.config.Version))
 	if err != nil {
 		return nil
 	}
@@ -205,7 +214,7 @@ func (e *WorkerEngine) upsertSchedules(ctx context.Context, schedules []Schedule
 	if len(schedules) == 0 {
 		return nil
 	}
-	m, err := NewSchedules(e.backend)
+	m, err := NewSchedules(e.backend, ClientVersion(e.config.Version))
 	if err != nil {
 		return err
 	}

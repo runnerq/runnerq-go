@@ -12,6 +12,7 @@ engine, err := runnerq.Builder().
     Metrics(&MyMetrics{}).                     // default: no-op
     Retention(runnerq.RetentionConfig{...}).   // default: keep everything forever
     ShutdownGrace(30 * time.Second).           // default 30s
+    Version("2026.11.2").                      // version pinning; default: none
     Build()
 ```
 

@@ -43,6 +43,10 @@ type ScheduleOptions struct {
 	RetryDelaySeconds    uint64            `json:"retry_delay_seconds"`
 	MaxRetryDelaySeconds uint64            `json:"max_retry_delay_seconds"`
 	Metadata             map[string]string `json:"metadata"`
+	// CodeVersion is the version fires are pinned to (runnerq-spec
+	// versions.md); empty fires unstamped work. SDKs set it at upsert from
+	// the upserting process's version.
+	CodeVersion string `json:"code_version,omitempty"`
 }
 
 // DefaultScheduleOptions are what absent keys of a stored schedule's options
@@ -147,6 +151,8 @@ func ValidateSchedule(s *Schedule) error {
 		return invalid("catch_up_limit", fmt.Sprintf("catch_up_limit must be 1 to %d", MaxCatchUpLimit))
 	case s.Options.Priority < PriorityLow || s.Options.Priority > PriorityCritical:
 		return invalid("priority", "priority must be 1 to 4")
+	case len(s.Options.CodeVersion) > MaxCodeVersionBytes:
+		return invalid("code_version", fmt.Sprintf("code_version must be at most %d bytes", MaxCodeVersionBytes))
 	}
 	if _, err := cron.Parse(s.Cron); err != nil {
 		return invalid("cron", err.Error())
@@ -230,6 +236,7 @@ func ScheduledActivity(s *Schedule, at, now time.Time) QueuedActivity {
 		CreatedAt:      now,
 		RootActivityID: id,
 		Serialization:  s.Serialization,
+		CodeVersion:    s.Options.CodeVersion,
 	}
 }
 

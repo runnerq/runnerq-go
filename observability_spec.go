@@ -72,6 +72,18 @@ const (
 	// (due, unclaimed) activity has been due; 0 when none is pending. Sampled
 	// with queue_depth.
 	MetricQueueOldestPendingAge = "queue_oldest_pending_age"
+	// MetricActivitiesByVersion is a gauge ({activity}): unfinished activities
+	// (pending, scheduled, running or waiting) in the queue by code version. When
+	// a version reaches 0 its workers can stop. Sampled with queue_depth, only by
+	// workers that have a version; a version that has dropped to zero is reported
+	// as 0.
+	MetricActivitiesByVersion = "activities_by_version"
+	// MetricActivitiesUnserved is a gauge ({activity}): runnable activities (due
+	// and unclaimed) pinned to a version this worker does not serve, by version,
+	// and 0 for each version it serves. A version whose minimum across the
+	// queue's workers stays above 0 is served by none of them: stranded work.
+	// Sampled with queue_depth, only by workers that have a version.
+	MetricActivitiesUnserved = "activities_unserved"
 	// MetricActivitiesInFlight is a gauge ({activity}): attempts running on this
 	// worker now, for every activity type it serves.
 	MetricActivitiesInFlight = "activities_in_flight"
@@ -86,6 +98,9 @@ const (
 	// LabelStatus: A canonical activity status (vectors/canonical_status.json):
 	// pending, scheduled, running, waiting or dead_letter.
 	LabelStatus = "status"
+	// LabelVersion: A code version activities are pinned to (versions.md); empty
+	// for unstamped activities.
+	LabelVersion = "version"
 )
 
 // MetricKind is how a metric aggregates.
@@ -129,6 +144,8 @@ var MetricCatalog = []MetricInfo{
 	{Name: MetricActivityCompletionPersistence, Kind: MetricHistogram, Unit: "s", Labels: []string{LabelQueue, LabelActivityType}, Description: "How long recording a completion took, retries included."},
 	{Name: MetricQueueDepth, Kind: MetricGauge, Unit: "{activity}", Labels: []string{LabelQueue, LabelActivityType, LabelStatus}, Description: "Activities in the queue by status, for the statuses listed under the status label. Sampled from the storage's aggregate query; a combination that has dropped to zero is reported as 0."},
 	{Name: MetricQueueOldestPendingAge, Kind: MetricGauge, Unit: "s", Labels: []string{LabelQueue}, Description: "How long the oldest pending (due, unclaimed) activity has been due; 0 when none is pending. Sampled with queue_depth."},
+	{Name: MetricActivitiesByVersion, Kind: MetricGauge, Unit: "{activity}", Labels: []string{LabelQueue, LabelVersion}, Description: "Unfinished activities (pending, scheduled, running or waiting) in the queue by code version. When a version reaches 0 its workers can stop. Sampled with queue_depth, only by workers that have a version; a version that has dropped to zero is reported as 0."},
+	{Name: MetricActivitiesUnserved, Kind: MetricGauge, Unit: "{activity}", Labels: []string{LabelQueue, LabelVersion}, Description: "Runnable activities (due and unclaimed) pinned to a version this worker does not serve, by version, and 0 for each version it serves. A version whose minimum across the queue's workers stays above 0 is served by none of them: stranded work. Sampled with queue_depth, only by workers that have a version."},
 	{Name: MetricActivitiesInFlight, Kind: MetricGauge, Unit: "{activity}", Labels: []string{LabelQueue, LabelActivityType}, Description: "Attempts running on this worker now, for every activity type it serves."},
 }
 

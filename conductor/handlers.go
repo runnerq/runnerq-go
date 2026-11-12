@@ -206,7 +206,7 @@ func toActivity(r storage.ActivityRecord) wire.Activity {
 		Attempt: r.Attempt, MaxAttempts: r.MaxAttempts, CreatedAt: ts(r.CreatedAt),
 		ScheduledFor: tsp(r.ScheduledFor), StartedAt: tsp(r.StartedAt), CompletedAt: tsp(r.CompletedAt),
 		UpdatedAt: ts(r.UpdatedAt), TimeoutMS: r.Timeout.Milliseconds(), LeaseExpiresAt: tsp(r.LeaseExpiresAt),
-		ExecutorID: r.ExecutorID, Metadata: r.Metadata, Payload: r.Payload, Result: toResult(r.Result),
+		ExecutorID: r.ExecutorID, Version: r.Version, Metadata: r.Metadata, Payload: r.Payload, Result: toResult(r.Result),
 	}
 	if r.ParentID != nil {
 		v.ParentID = r.ParentID.String()

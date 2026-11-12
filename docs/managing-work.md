@@ -55,6 +55,7 @@ commands are scoped to the backend's queue.
 | `Reschedule` | scheduled | Runs at the new time |
 | `SetPriority` | unfinished | New priority |
 | `Delete` | finished roots | Removed with their whole tree |
+| `Repin` | unfinished, on another version | Pinned to the new version ([Version pinning](versions.md)) |
 
 Each takes a `Target`, either ids or a bounded filter:
 

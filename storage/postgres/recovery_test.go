@@ -44,7 +44,7 @@ func claimTestActivity(t *testing.T, b *PostgresBackend, a storage.QueuedActivit
 	if err := b.Enqueue(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	got, err := b.Dequeue(context.Background(), worker, 0, []string{a.ActivityType})
+	got, err := b.Dequeue(context.Background(), worker, 0, []string{a.ActivityType}, nil)
 	if err != nil || got == nil || got.ID != a.ID {
 		t.Fatalf("claim: %v %v", got, err)
 	}
@@ -468,7 +468,7 @@ func TestCleanupAndKeyReuseOrderOnIdempotencyRow(t *testing.T) {
 		if got, err := b.EnqueueIdempotent(ctx, &child); err != nil || got != nil {
 			t.Fatalf("first claim: %v %v", got, err)
 		}
-		if c, err := b.Dequeue(ctx, "c", 0, []string{"child"}); err != nil || c == nil {
+		if c, err := b.Dequeue(ctx, "c", 0, []string{"child"}, nil); err != nil || c == nil {
 			t.Fatalf("claim child: %v %v", c, err)
 		}
 		if err := b.AckSuccess(ctx, child.ID, json.RawMessage(`42`), "c"); err != nil {

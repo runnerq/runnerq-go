@@ -179,7 +179,8 @@ Rules of thumb:
 
 - Never rename a live `Step`/`Run`/`Sleep`/`WaitForSignal` name.
 - Gate behavioral changes on a version field in the payload, not on editing
-  live step sequences.
+  live step sequences, or pin work to the code version that started it
+  ([Version pinning](versions.md)).
 - Remember code between steps re-runs on replay — keep it pure or wrap it.
 
 ## Quick reference

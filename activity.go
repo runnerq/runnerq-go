@@ -138,6 +138,7 @@ type activity struct {
 	ParentActivityID     *uuid.UUID         `json:"parent_activity_id,omitempty"`
 	RootActivityID       uuid.UUID          `json:"root_activity_id"`
 	Depth                uint16             `json:"depth"`
+	CodeVersion          string             `json:"code_version,omitempty"`
 }
 
 func newActivity(activityType string, payload json.RawMessage, option *ActivityOption) *activity {

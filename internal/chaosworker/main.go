@@ -24,6 +24,7 @@ import (
 
 type env struct {
 	dsn, queue, prefix, worker string
+	version                    string // the code version to run and stamp, if any
 	concurrency                int
 	leaseMS                    int64
 }
@@ -37,6 +38,7 @@ func main() {
 		queue:       os.Getenv("RUNNERQ_CHAOS_QUEUE"),
 		prefix:      os.Getenv("RUNNERQ_CHAOS_PREFIX"),
 		worker:      os.Getenv("RUNNERQ_CHAOS_WORKER"),
+		version:     os.Getenv("RUNNERQ_CHAOS_VERSION"),
 		concurrency: atoi(os.Getenv("RUNNERQ_CHAOS_CONCURRENCY"), 8),
 		leaseMS:     int64(atoi(os.Getenv("RUNNERQ_CHAOS_LEASE_MS"), 60_000)),
 	}
@@ -83,7 +85,7 @@ func work(e env) error {
 	}
 	defer ledger.Close()
 
-	engine, err := runnerq.Builder().Backend(backend).MaxWorkers(e.concurrency).ShutdownGrace(10 * time.Second).Build()
+	engine, err := runnerq.Builder().Backend(backend).MaxWorkers(e.concurrency).ShutdownGrace(10 * time.Second).Version(e.version).Build()
 	if err != nil {
 		return err
 	}
@@ -239,7 +241,7 @@ func client(e env) error {
 		return err
 	}
 	defer backend.Close()
-	engine, err := runnerq.Builder().Backend(backend).Build()
+	engine, err := runnerq.Builder().Backend(backend).Version(e.version).Build()
 	if err != nil {
 		return err
 	}

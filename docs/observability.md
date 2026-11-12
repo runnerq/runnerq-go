@@ -89,7 +89,9 @@ is the worker's own count. `queue_depth` and `queue_oldest_pending_age` need a
 backend that implements `storage.QueryStorage` (the Postgres backend does):
 each sample costs one `AggregateActivities` call and one single-row
 `QueryActivities` call. A status that empties out is reported as 0. In a big
-fleet, turning gauges on for a few workers is enough.
+fleet, turning gauges on for a few workers is enough. Workers with a version
+also report `activities_by_version` and `activities_unserved`
+([Version pinning](versions.md)), at the cost of two more aggregates.
 
 ## Tracing
 

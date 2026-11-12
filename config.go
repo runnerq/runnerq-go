@@ -1,8 +1,12 @@
 package runnerq
 
 import (
+	"fmt"
 	"maps"
+	"slices"
 	"time"
+
+	"github.com/runnerq/runnerq-go/storage"
 )
 
 // RetentionConfig opts the engine into deleting old terminal workflow trees;
@@ -74,8 +78,20 @@ type WorkerConfig struct {
 	GaugeInterval time.Duration `json:"gauge_interval,omitempty"`
 
 	// Labels are free-form tags for this worker (region, deploy version),
-	// carried in its executor snapshots.
+	// carried in its executor snapshots. With a Version, the label "version"
+	// is the Version.
 	Labels map[string]string `json:"labels,omitempty"`
+
+	// Version is the code version this worker runs (1 to 256 bytes): the
+	// roots it and its Client submit, and the schedules it declares, are
+	// pinned to it, and it claims only unstamped work and work pinned to a
+	// version it serves (docs/versions.md). Empty, the default, pins and
+	// filters nothing.
+	Version string `json:"version,omitempty"`
+
+	// Serves lists further versions this worker claims, besides its own
+	// Version and unstamped work; it needs a Version.
+	Serves []string `json:"serves,omitempty"`
 }
 
 // DefaultMaxActivityDepth is MaxActivityDepth's default.
@@ -97,6 +113,7 @@ func DefaultWorkerConfig() WorkerConfig {
 func cloneWorkerConfig(c WorkerConfig) WorkerConfig {
 	c.ActivityTypes = append([]string(nil), c.ActivityTypes...)
 	c.Labels = maps.Clone(c.Labels)
+	c.Serves = append([]string(nil), c.Serves...)
 	c.SchedulePollIntervalSeconds = cloneConfigPtr(c.SchedulePollIntervalSeconds)
 	c.LeaseMS = cloneConfigPtr(c.LeaseMS)
 	c.ReaperIntervalSeconds = cloneConfigPtr(c.ReaperIntervalSeconds)
@@ -111,4 +128,47 @@ func cloneConfigPtr[T any](p *T) *T {
 	}
 	v := *p
 	return &v
+}
+
+// maxServedVersions bounds a worker's served versions, its own included.
+const maxServedVersions = 64
+
+// servedVersions is the claim's version filter: nil without a Version, else
+// the Version and then Serves, without repeats.
+func (c *WorkerConfig) servedVersions() []string {
+	if c.Version == "" {
+		return nil
+	}
+	out := []string{c.Version}
+	for _, v := range c.Serves {
+		if !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func validateVersions(c *WorkerConfig) error {
+	if c.Version == "" {
+		if len(c.Serves) > 0 {
+			return &WorkerError{Kind: ErrConfiguration, Message: "Serves needs a Version: a worker without one claims every version"}
+		}
+		return nil
+	}
+	for _, v := range append([]string{c.Version}, c.Serves...) {
+		if err := validateVersion(v); err != nil {
+			return err
+		}
+	}
+	if len(c.servedVersions()) > maxServedVersions {
+		return &WorkerError{Kind: ErrConfiguration, Message: fmt.Sprintf("a worker serves at most %d versions, its own included", maxServedVersions)}
+	}
+	return nil
+}
+
+func validateVersion(v string) error {
+	if v == "" || len(v) > storage.MaxCodeVersionBytes {
+		return &WorkerError{Kind: ErrConfiguration, Message: fmt.Sprintf("a version is 1 to %d bytes, not %d", storage.MaxCodeVersionBytes, len(v))}
+	}
+	return nil
 }

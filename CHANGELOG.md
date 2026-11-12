@@ -75,9 +75,27 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   including a mixed Go/TypeScript one; the dialect, time zones, daylight
   saving and catch-up follow runnerq-spec's `schedules.md`. Needs schema
   migration `0003_schedules`.
+- Version pinning ([docs/versions.md](docs/versions.md)):
+  `WorkerConfig.Version` / `Builder.Version` pins the roots a worker submits
+  and the schedules it declares, and makes it claim only unstamped work and
+  its own version's; `Serves` adds older versions. `ClientVersion` pins a
+  standalone `Client`'s and `NewSchedules`' submissions. Children take their
+  root's version. `Client.Repin` moves work to another version through the
+  command ledger. The `version` query field and aggregate key, gauges
+  `activities_by_version` and `activities_unserved`, and a warning for
+  runnable work no local version serves show draining and stranded work.
+  A worker's version is its executor label `version` and
+  `executor.Info.Version`, over the conductor too. Needs schema migration
+  `0004_code_version` (one nullable column, applied automatically). Without a
+  version nothing changes.
 
 ### Changed
 
+- **Breaking for storage backends:** `QueueStorage.Dequeue` and
+  `BatchQueueStorage.DequeueBatch` take a `versions []string` filter after
+  the activity types (version pinning); a backend must claim only unstamped
+  activities and those whose `CodeVersion` is listed when it is non-empty,
+  and store a child's root's `CodeVersion` (`storagetest` checks both).
 - Go 1.25 is the minimum (was 1.27 on `main`); CI tests Go 1.25, 1.26 and
   1.27 and Postgres 14 to 18.
 - Leaner storage: about half the writes and storage per activity; lease
