@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/runnerq/runnerq-go"
 	"github.com/runnerq/runnerq-go/conductor/internal/wire"
 	"github.com/runnerq/runnerq-go/executor"
 )
@@ -50,7 +51,7 @@ func TestNoticesFollowTheCloud(t *testing.T) {
 	}
 	runEngine(t, e)
 
-	fut, err := e.GetActivityExecutor().Activity[Echo]().Payload(json.RawMessage(`{"n":1}`)).Execute(context.Background())
+	fut, err := runnerq.Activity[Echo](e.GetActivityExecutor()).Payload(json.RawMessage(`{"n":1}`)).Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func TestNoticesFollowTheCloud(t *testing.T) {
 
 	g.send(wire.TypeConfigUpdate, wire.SessionConfig{Notices: &off})
 	time.Sleep(100 * time.Millisecond) // the update is applied before the next submission
-	later, err := e.GetActivityExecutor().Activity[Echo]().Payload(json.RawMessage(`{}`)).Execute(context.Background())
+	later, err := runnerq.Activity[Echo](e.GetActivityExecutor()).Payload(json.RawMessage(`{}`)).Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

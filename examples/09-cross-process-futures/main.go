@@ -69,8 +69,7 @@ func main() {
 
 	// POST /jobs — enqueue and return the activity ID. The caller polls with it.
 	mux.HandleFunc("POST /jobs", func(w http.ResponseWriter, r *http.Request) {
-		fut, err := engine.GetActivityExecutor().
-			Activity[ResizeImage]().
+		fut, err := runnerq.Activity[ResizeImage](engine.GetActivityExecutor()).
 			Payload(json.RawMessage(`{"src":"photo.jpg"}`)).
 			Execute(r.Context())
 		if err != nil {
@@ -106,7 +105,7 @@ func main() {
 		}
 	})
 
-	srv := &http.Server{Addr: ":8080", Handler: mux}
+	srv := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("API server failed (port in use?): %v", err)

@@ -40,5 +40,6 @@ Patterns & operations:
 | 10 | [retries-and-dead-letter](10-retries-and-dead-letter/) | Backoff, the dead-letter queue, and the `OnDeadLetter` callback |
 | 11 | [retention](11-retention/) | TTL cleanup of completed workflow trees |
 | 12 | [workload-isolation](12-workload-isolation/) | Many worker fleets on one queue, each handling its own types |
+| 13 | [cron-schedules](13-cron-schedules/) | A cron schedule fired once per tick across every engine |
 
 If you only run one, run **02** — it's the demo that shows what "durable" means.

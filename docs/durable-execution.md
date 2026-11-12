@@ -15,16 +15,16 @@ that must not repeat.
 
 - A handler may run **many times**. Code *outside* a durable primitive
   re-executes on every replay. Keep bare code free of side effects, or move
-  the side effect into a `ctx.RunStep`.
+  the side effect into a `runnerq.RunStep`.
 - Each durable primitive has a **name**. Names must be **stable across
   retries** and **unique within the handler**. The name is the checkpoint key.
 - Delivery is **at-least-once**; checkpoints make recorded successes
   **at-most-once**.
 
-## `ctx.RunStep` — checkpoint a side effect
+## `runnerq.RunStep` — checkpoint a side effect
 
 ```go
-receipt, err := ctx.RunStep("charge-card", func(c context.Context) (Receipt, error) {
+receipt, err := runnerq.RunStep(ctx, "charge-card", func(c context.Context) (Receipt, error) {
     return chargeCard(c, payload)   // runs at most once per recorded success
 })
 ```
@@ -35,6 +35,9 @@ round-trips through `encoding/json`. The result is encoded into the
 checkpoint and decoded back into `R` on replay. If a deploy changes `R` so
 that a stored result no longer decodes, the step fails with a `NonRetryError`
 naming it — retrying cannot fix a shape mismatch.
+
+On Go 1.27 and later, `ctx.RunStep("charge-card", fn)` is the same call as a
+method. The package function works on every supported toolchain (Go 1.25+).
 
 `ctx.Run(name, func() (json.RawMessage, error))` is the untyped form for
 callers already holding JSON. Both share the same checkpoint semantics.
@@ -56,8 +59,7 @@ provider idempotency key to your payment API, etc.). See
 ## `.Step(name)` — memoize a child activity spawn
 
 ```go
-fut, err := ctx.ActivityExecutor.
-    Activity[ReserveInventory]().
+fut, err := runnerq.Activity[ReserveInventory](ctx.ActivityExecutor).
     Step("reserve").
     Payload(payload).
     Execute(ctx.Ctx)
@@ -134,12 +136,12 @@ activity) and `processing`. Queries show it with the reason; signal delivery wak
 
 ```go
 func (h *FulfillOrder) Handle(ctx runnerq.ActivityContext, payload json.RawMessage) (json.RawMessage, error) {
-    receipt, err := ctx.RunStep("charge", func(c context.Context) (Receipt, error) {
+    receipt, err := runnerq.RunStep(ctx, "charge", func(c context.Context) (Receipt, error) {
         return chargeCard(c, payload)
     })
     if err != nil { return nil, err }
 
-    fut, err := ctx.ActivityExecutor.Activity[ShipOrder]().Step("ship").Payload(payload).Execute(ctx.Ctx)
+    fut, err := runnerq.Activity[ShipOrder](ctx.ActivityExecutor).Step("ship").Payload(payload).Execute(ctx.Ctx)
     if err != nil { return nil, err }
     if _, err := fut.GetResult(ctx.Ctx); err != nil { return nil, err }
 
@@ -148,7 +150,7 @@ func (h *FulfillOrder) Handle(ctx runnerq.ActivityContext, payload json.RawMessa
     feedback, err := ctx.WaitForSignal("delivered-confirmation", 7*24*time.Hour)
     if runnerq.IsSignalTimeout(err) { feedback = nil } else if err != nil { return nil, err }
 
-    closed, err := ctx.RunStep("close-order", func(c context.Context) (Order, error) {
+    closed, err := runnerq.RunStep(ctx, "close-order", func(c context.Context) (Order, error) {
         return closeOrder(c, receipt, feedback)
     })
     if err != nil { return nil, err }

@@ -117,7 +117,7 @@ func TestEngineSnapshotAndObservers(t *testing.T) {
 		t.Fatalf("counters after: %+v", c)
 	}
 	// The configured sink still sees every metric.
-	if sink.get(metricStarted) != 1 || sink.get("activity_completed") != 1 {
+	if sink.get(MetricActivityStarted) != 1 || sink.get("activity_completed") != 1 {
 		t.Fatalf("sink: %v", sink.counts)
 	}
 }
@@ -142,16 +142,16 @@ func (m *lockedMetrics) get(k string) uint64 {
 
 func TestCountingMetrics(t *testing.T) {
 	sink := recoveryMetrics{}
-	m := newCountingMetrics(sink)
+	m := newCountingMetrics(UnlabeledMetrics(sink))
 	for name, n := range map[string]uint64{
-		metricStarted: 7, "activity_completed": 3, "activity_retry": 2, "activity_failed_non_retry": 1,
-		"activity_timeout": 1, metricDeadLettered: 1, "activity_claim_lost": 1, "activity_heartbeat_failed": 4,
+		MetricActivityStarted: 7, "activity_completed": 3, "activity_retry": 2, "activity_failed_non_retry": 1,
+		"activity_timeout": 1, MetricActivityDeadLettered: 1, "activity_claim_lost": 1, "activity_heartbeat_failed": 4,
 		"storage_retry": 9,
 	} {
-		m.IncCounter(name, n)
+		m.AddCounter(name, n, MetricLabels{})
 	}
-	m.ObserveDuration(metricClaimLag, time.Second)
-	m.ObserveDuration(metricClaimLag, 3*time.Millisecond)
+	m.RecordHistogram(MetricActivityClaimLag, 1, MetricLabels{})
+	m.RecordHistogram(MetricActivityClaimLag, 0.003, MetricLabels{})
 	want := executor.Counters{
 		Claimed: 7, Succeeded: 3, Retried: 2, Failed: 1, TimedOut: 1, DeadLettered: 1,
 		ClaimsLost: 1, HeartbeatFailures: 4, LastClaimLag: 3 * time.Millisecond,

@@ -323,6 +323,16 @@ func (w *watcher) wakeResultWaiters(payload string) {
 	}
 }
 
+// NotifyResult hints when a result for id is stored, by any process on the
+// database (storage.ResultNotifier).
+func (b *PostgresBackend) NotifyResult(id uuid.UUID) (<-chan struct{}, func()) {
+	w := b.getWatcher()
+	ch := w.registerResult(id)
+	return ch, sync.OnceFunc(func() { w.unregisterResult(id, ch) })
+}
+
+var _ storage.ResultNotifier = (*PostgresBackend)(nil)
+
 // WaitForResult blocks until the activity's result exists, ctx is done, or a
 // storage error occurs. It works across processes: the producer and the waiter
 // only need backends on the same database. Idle cost is one point-SELECT per

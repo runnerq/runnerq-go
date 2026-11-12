@@ -98,6 +98,21 @@ type args struct {
 
 	EventsS float64 `json:"events_s"`
 	Batch   int     `json:"batch"`
+
+	CommandID     string               `json:"command_id"`
+	Fingerprint   string               `json:"fingerprint"`
+	IDs           []uuid.UUID          `json:"ids"`
+	Filter        *storage.QueryFilter `json:"filter"`
+	Max           int                  `json:"max"`
+	DryRun        bool                 `json:"dry_run"`
+	Cascade       bool                 `json:"cascade"`
+	ResetAttempts bool                 `json:"reset_attempts"`
+	At            time.Time            `json:"at"`
+
+	Cron         string `json:"cron"`
+	Timezone     string `json:"timezone"`
+	CatchUp      string `json:"catch_up"`
+	CatchUpLimit int    `json:"catch_up_limit"`
 }
 
 var behaviors = map[string]storage.IdempotencyBehavior{
@@ -178,6 +193,40 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 			Events:    time.Duration(a.EventsS * float64(time.Second)),
 		}, max(a.Batch, 1))
 		return map[string]any{"count": n}, err
+	case "upsert_schedule":
+		o := storage.ScheduleOptions{Priority: storage.PriorityNormal, MaxRetries: 3, TimeoutSeconds: 30, RetryDelaySeconds: 1, Metadata: a.Metadata}
+		if a.Priority != nil {
+			o.Priority = storage.ActivityPriority(*a.Priority)
+		}
+		if a.MaxAttempts != nil {
+			o.MaxRetries = *a.MaxAttempts
+		}
+		if a.TimeoutS != nil {
+			o.TimeoutSeconds = *a.TimeoutS
+		}
+		return nil, d.b.UpsertSchedule(ctx, storage.Schedule{
+			Name: a.Name, Cron: a.Cron, Timezone: a.Timezone, ActivityType: a.Type, Payload: a.Payload,
+			Options: o, CatchUp: storage.CatchUp(a.CatchUp), CatchUpLimit: a.CatchUpLimit,
+		})
+	case "pause_schedule":
+		return nil, d.b.PauseSchedule(ctx, a.Name)
+	case "resume_schedule":
+		return nil, d.b.ResumeSchedule(ctx, a.Name)
+	case "delete_schedule":
+		return nil, d.b.DeleteSchedule(ctx, a.Name)
+	case "trigger_schedule":
+		id, err := d.b.TriggerSchedule(ctx, a.Name)
+		return map[string]any{"id": id}, err
+	case "list_schedules":
+		list, err := d.b.ListSchedules(ctx)
+		names := []string{}
+		for _, s := range list {
+			names = append(names, s.Name)
+		}
+		return map[string]any{"names": names}, err
+	case "fire_schedules":
+		n, err := d.b.FireDueSchedules(ctx, max(a.Limit, 100))
+		return map[string]any{"count": n}, err
 	case "get_result":
 		r, err := d.b.GetResult(ctx, a.ID)
 		if err != nil || r == nil {
@@ -188,8 +237,42 @@ func (d *driver) do(ctx context.Context, op string, raw json.RawMessage) (any, e
 			state = "error"
 		}
 		return map[string]any{"result": map[string]any{"state": state, "data": r.Data, "serialization": r.Serialization}}, nil
+	case "command":
+		return d.command(ctx, a)
 	}
 	return nil, &storage.StorageError{Kind: storage.ErrUnsupported, Message: "unknown op " + op}
+}
+
+func (d *driver) command(ctx context.Context, a args) (any, error) {
+	cmd := storage.Command{
+		ID: a.CommandID, Fingerprint: a.Fingerprint, Kind: storage.CommandKind(a.Kind),
+		Target: storage.CommandTarget{IDs: a.IDs, Filter: a.Filter, Max: a.Max},
+		DryRun: a.DryRun, Reason: a.Reason, CascadeChildren: a.Cascade, ResetAttempts: a.ResetAttempts,
+		At: a.At, SignalName: a.Name, SignalPayload: a.Payload,
+	}
+	if a.Priority != nil {
+		cmd.Priority = storage.ActivityPriority(*a.Priority)
+	}
+	if cmd.Fingerprint == "" {
+		cmd.Fingerprint = storage.CommandFingerprint(cmd)
+	}
+	res, err := d.b.ApplyCommand(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, len(res.Items))
+	for i, it := range res.Items {
+		item := map[string]any{"id": it.ID, "outcome": it.Outcome}
+		if it.Status != "" {
+			item["status"] = it.Status
+		}
+		if it.ErrMessage != "" {
+			item["error"] = kindOf(&storage.StorageError{Kind: it.ErrKind})
+		}
+		items[i] = item
+	}
+	return map[string]any{"matched": res.Matched, "applied": res.Applied, "cascaded": res.Cascaded,
+		"more": res.More, "replayed": res.Replayed, "items": items}, nil
 }
 
 func (d *driver) submit(ctx context.Context, a args) (any, error) {
