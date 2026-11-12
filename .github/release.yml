@@ -1,0 +1,27 @@
+# Categories for GitHub's generated release notes (the Release workflow and
+# "Generate release notes" in the UI). A merged PR lands in the first
+# category whose labels it carries; label PRs when you merge them.
+changelog:
+  exclude:
+    labels:
+      - skip-release-notes
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: Breaking changes
+      labels: [breaking]
+    - title: Features
+      labels: [feature, enhancement]
+    - title: Bug fixes
+      labels: [fix, bug]
+    - title: Performance
+      labels: [perf]
+    - title: Security
+      labels: [security]
+    - title: Documentation
+      labels: [docs, documentation]
+    - title: Maintenance
+      labels: [chore, refactor, ci, build, deps]
+    - title: Other changes
+      labels: ['*']

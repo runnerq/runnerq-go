@@ -52,8 +52,10 @@ go get github.com/runnerq/runnerq-go@main
 Requires Go 1.25 or later. The generic helpers are package functions,
 `runnerq.RunStep(ctx, name, fn)` and `runnerq.Activity[T](exec)`; on Go 1.27
 and later they are also methods (`ctx.RunStep(name, fn)`,
-`exec.Activity[T]()`), the same calls in another spelling. The API in this README is on `main` and not in a tagged
-release yet. The latest release, v0.5.1, has the older
+`exec.Activity[T]()`), the same calls in another spelling.
+
+The API in this README is on `main` and not in a tagged release yet; see
+[CHANGELOG.md](CHANGELOG.md). The latest release, v0.5.1, has the older
 [named-activity API](https://github.com/runnerq/runnerq-go/tree/v0.5.1#readme)
 and the old module path, `github.com/alob-mtc/runnerq-go`. To move to this
 one, rewrite your imports:

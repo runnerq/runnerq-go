@@ -18,15 +18,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Re-runs release-drafter against the just-pushed tag — release-drafter
-      # detects the existing draft, replaces its tag/name with the actual
-      # tag, and publishes it. Net effect: the draft accumulated by every
-      # main-merge becomes the real release the moment the maintainer pushes
-      # `git tag vX.Y.Z && git push --tags`.
-      - uses: release-drafter/release-drafter@v6
-        with:
-          publish: true
-          tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+      # The release body is the tag's CHANGELOG.md section followed by the
+      # PR list GitHub generates from labels (.github/release.yml).
+      - name: Create the GitHub release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## v?" v "( |$)" { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "CHANGELOG.md has no section for $TAG; rename ## Unreleased before tagging." >&2
+            exit 1
+          fi
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes $prerelease
