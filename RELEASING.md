@@ -78,7 +78,12 @@ The "public API" surface includes:
 - The `storage/storagetest` package: `Run()`, `Harness`, `Reader`.
 - The `storage/postgres` package: `New()`, `WithConfig()`,
   `PostgresBackend`.
-- The `conductor` package: `Start()`, `Config`, `Agent`.
+- The `conductor` module (`github.com/alob-mtc/runnerq-go/conductor`):
+  `Start()`, `Config`, `Agent`. It is its own module so the SDK doesn't
+  depend on what only the agent needs. Release it with the SDK: tag
+  `conductor/vX.Y.Z` on the same commit as `vX.Y.Z`, after pointing
+  `conductor/go.mod`'s `require github.com/alob-mtc/runnerq-go` at `vX.Y.Z`
+  (its `replace ../` serves development in this repository only).
 
 Internal types (lowercase) and the `examples/` directory carry no
 stability guarantee.

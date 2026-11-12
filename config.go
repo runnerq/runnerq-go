@@ -70,7 +70,7 @@ type WorkerConfig struct {
 	ShutdownGraceSeconds *uint64 `json:"shutdown_grace_seconds,omitempty"`
 
 	// Labels are free-form tags for this worker (region, deploy version),
-	// shown by RunnerQ Cloud.
+	// carried in its executor snapshots.
 	Labels map[string]string `json:"labels,omitempty"`
 }
 

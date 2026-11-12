@@ -185,10 +185,10 @@ ALTER TABLE runnerq_results
 
 -- step is the human identity of a checkpoint row, "kind:name" (e.g.
 -- "run:create-transfer", "sleep:retry-backoff") — the same string the checkpoint
--- ID is derived from, persisted so the console can show a workflow's durable
--- step history (the checkpoint ID itself is a one-way hash). NULL for an
--- activity's own final result and for legacy rows. No dedicated index: read only
--- by owner (idx_runnerq_results_by_owner) on the console path, never on a hot path.
+-- ID is derived from, persisted so a workflow's durable step history can be
+-- listed (the checkpoint ID itself is a one-way hash). NULL for an activity's
+-- own final result and for legacy rows. No dedicated index: read only by owner
+-- (idx_runnerq_results_by_owner) when listing steps, never on a hot path.
 ALTER TABLE runnerq_results
     ADD COLUMN IF NOT EXISTS step TEXT;
 
@@ -196,21 +196,8 @@ ALTER TABLE runnerq_results
 ALTER TABLE runnerq_results
     ADD COLUMN IF NOT EXISTS serialization TEXT NOT NULL DEFAULT 'json-v1';
 
--- Worker pools: one row per live engine instance. Heartbeats let us tell
--- which pools are still alive for cluster-wide capacity reporting.
-CREATE TABLE IF NOT EXISTS runnerq_worker_pools (
-    pool_id        UUID PRIMARY KEY,
-    queue_name     TEXT NOT NULL,
-    max_workers    INTEGER NOT NULL,
-    activity_types TEXT[],
-    started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_runnerq_worker_pools_queue_alive
-    ON runnerq_worker_pools(queue_name, last_seen_at);
-
--- Command ledger: applied RunnerQ Cloud commands and their results, so a
--- repeated command_id replays its result instead of applying twice. Rows are
+-- Command ledger: applied commands and their results, so a repeated
+-- command_id replays its result instead of applying twice. Rows are
 -- pruned after a week (commands must be replayable for at least 24 hours).
 CREATE TABLE IF NOT EXISTS runnerq_commands (
     queue_name  TEXT NOT NULL,
@@ -235,6 +222,10 @@ CREATE TABLE IF NOT EXISTS runnerq_dependencies (
 );
 CREATE INDEX IF NOT EXISTS idx_runnerq_dependencies_result
  ON runnerq_dependencies(queue_name, result_id);
+`},
+	{Name: "0002_drop_worker_pools", SQL: `-- runnerq_worker_pools held a row per engine for a capacity report nothing
+-- reads any more.
+DROP TABLE IF EXISTS runnerq_worker_pools;
 `},
 }
 
@@ -354,14 +345,6 @@ var PostgresCatalog = Catalog{
 			{Name: "state", Type: "text", Nullable: false, Default: ""},
 			{Name: "step", Type: "text", Nullable: true, Default: ""},
 		}},
-		{Name: "runnerq_worker_pools", PrimaryKey: []string{"pool_id"}, Columns: []CatalogColumn{
-			{Name: "activity_types", Type: "_text", Nullable: true, Default: ""},
-			{Name: "last_seen_at", Type: "timestamptz", Nullable: false, Default: "now()"},
-			{Name: "max_workers", Type: "int4", Nullable: false, Default: ""},
-			{Name: "pool_id", Type: "uuid", Nullable: false, Default: ""},
-			{Name: "queue_name", Type: "text", Nullable: false, Default: ""},
-			{Name: "started_at", Type: "timestamptz", Nullable: false, Default: "now()"},
-		}},
 	},
 	Indexes: []CatalogIndex{
 		{Name: "idx_runnerq_commands_created", Table: "runnerq_commands", Definition: "CREATE INDEX idx_runnerq_commands_created ON runnerq_commands USING btree (created_at)"},
@@ -377,7 +360,6 @@ var PostgresCatalog = Catalog{
 		{Name: "idx_runnerq_results_by_owner", Table: "runnerq_results", Definition: "CREATE INDEX idx_runnerq_results_by_owner ON runnerq_results USING btree (owner_activity_id) WHERE (owner_activity_id IS NOT NULL)"},
 		{Name: "idx_runnerq_root_children", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_root_children ON runnerq_activities USING btree (root_activity_id) WHERE (parent_activity_id IS NOT NULL)"},
 		{Name: "idx_runnerq_root_terminal", Table: "runnerq_activities", Definition: "CREATE INDEX idx_runnerq_root_terminal ON runnerq_activities USING btree (queue_name, status, completed_at) WHERE ((parent_activity_id IS NULL) AND (status = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text])))"},
-		{Name: "idx_runnerq_worker_pools_queue_alive", Table: "runnerq_worker_pools", Definition: "CREATE INDEX idx_runnerq_worker_pools_queue_alive ON runnerq_worker_pools USING btree (queue_name, last_seen_at)"},
 	},
 	RetiredColumns: []string{"runnerq_activities.payload"},
 	RetiredIndexes: []string{"idx_runnerq_dequeue_effective", "idx_runnerq_dequeue_order", "idx_runnerq_query_status_created", "idx_runnerq_activities_processing", "idx_runnerq_root_id", "idx_runnerq_root_terminal_age", "idx_runnerq_results_owner", "idx_runnerq_completed_non_cron", "idx_runnerq_completed_cron", "idx_runnerq_dead_letter", "idx_runnerq_root_only", "idx_runnerq_root_status", "idx_runnerq_query_type_created", "idx_runnerq_dependencies_producer"},

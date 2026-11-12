@@ -18,7 +18,7 @@ import (
 // include the ones the hot paths depend on.
 func TestSchemaExpectationCoversCatalog(t *testing.T) {
 	e := expectedSchema()
-	for _, want := range []string{"runnerq_activities", "runnerq_results", "runnerq_dependencies", "runnerq_worker_pools", "runnerq_commands"} {
+	for _, want := range []string{"runnerq_activities", "runnerq_results", "runnerq_dependencies", "runnerq_commands"} {
 		if !slices.Contains(e.tables, want) {
 			t.Fatalf("tables %v missing %s", e.tables, want)
 		}

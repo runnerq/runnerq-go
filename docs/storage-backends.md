@@ -39,15 +39,14 @@ On first connect the backend creates:
 | `runnerq_events` | append-only lifecycle event timeline |
 | `runnerq_results` | activity results and `Run`/`Sleep` checkpoints |
 | `runnerq_idempotency` | idempotency-key → activity mapping |
-| `runnerq_worker_pools` | unused: the old inspector's engine registry, left in place for existing databases |
 | `runnerq_dependencies` | durable references from a waiting activity to the results it waits on |
-| `runnerq_commands` | applied RunnerQ Cloud commands, so a repeated command replays its result |
+| `runnerq_commands` | applied commands, so a repeated command replays its result |
 
 Without [retention](configuration.md#retention) configured, these grow
 forever — turn it on for production.
 
 The schema is the one the TypeScript SDK uses, so either SDK can open a
-database the other created; only `runnerq_commands` is Go's alone.
+database the other created.
 
 #### Upgrading from an inline-payload schema
 
@@ -64,9 +63,8 @@ start to take a while.
 
 A custom backend must implement `storage.Storage`: `QueueStorage`
 (enqueue/dequeue/ack, leases, idempotency, results, signals, yield,
-retention) and `ResultStorage`. To be read and commanded from RunnerQ Cloud it
-also implements `storage.QueryStorage` and `storage.CommandStorage`. It's a
-large surface — the durable
+retention) and `ResultStorage`; to be queried and commanded it also implements
+`storage.QueryStorage` and `storage.CommandStorage`. It's a large surface — the durable
 primitives in particular (`Yield`, `WakeWaiting`, `SignalActivity`,
 `EnqueueIdempotent`, `CleanupExpired`, atomic `StoreResult` with an owner) each
 carry correctness requirements documented on the interface methods in
@@ -96,19 +94,18 @@ makes handler-issued spawns conditional on the claim, atomically with the
 insert. Without them the engine falls back to lease sizing alone and unfenced
 spawns.
 
-`storage.QueryStorage` is optional too, and is what RunnerQ Cloud reads
-through (see the `conductor` package). It is a general query layer in the
-Cloud's canonical model: activity filters (`and`/`or`/`not` over fields such
+`storage.QueryStorage` is optional too: a general query layer over a
+canonical model of activities and events, for dashboards and tooling (the
+`conductor` agent serves it too). Activity filters (`and`/`or`/`not` over fields such
 as `status`, `type`, `queue`, `root_id`, `parent_id`, `metadata.<key>` and the
 timestamps), one sort key with keyset cursors, heavy fields only on request,
 counts, grouped aggregates with time buckets and duration percentiles, event
 and step listings, and whole trees. Queries span every queue in the database.
 A backend advertises what it evaluates in `QueryCapabilities` and must reject
-anything else with `ErrUnsupported` rather than ignore it. Without it, a
-connected worker serves only its live executor state to the Cloud.
+anything else with `ErrUnsupported` rather than ignore it.
 
-`storage.CommandStorage` (also optional) applies RunnerQ Cloud's commands
-to the backend's own queue: cancel (non-terminal work; a running claim is
+`storage.CommandStorage` (also optional) applies operator commands to the
+backend's own queue: cancel (non-terminal work; a running claim is
 fenced out, children are cancelled when asked, and a cancellation error
 result wakes anything awaiting the activity), retry and redrive (from
 checkpoints), run now, reschedule, set priority, whole-tree delete and

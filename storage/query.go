@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// QueryStorage is the read surface RunnerQ Cloud queries through (see the
-// conductor package): filter, sort, project, paginate and aggregate
+// QueryStorage is a backend's read surface for dashboards and tooling (the
+// conductor agent serves it too): filter, sort, project, paginate and aggregate
 // activities, events and steps in the canonical backend-neutral model.
 //
 // Queries span every queue in the database (filter on "queue" to narrow), so

@@ -1,7 +1,7 @@
 // Package executor describes a running engine (an executor): who it is,
 // what it is doing and what it has done. The engine produces these
-// snapshots; the Cloud agent, the cloud storage adapter and metrics
-// exporters read them on their own schedules.
+// snapshots; reporters (the conductor agent, metrics exporters, your own
+// observers) read them on their own schedules.
 package executor
 
 import (
@@ -14,7 +14,7 @@ import (
 
 // Info identifies an executor; it is fixed for the run.
 type Info struct {
-	// ID is unique per run and is the executor id in RunnerQ Cloud.
+	// ID is unique per run: the engine's InstanceID.
 	ID             string
 	Queue          string
 	ActivityTypes  []string
@@ -79,8 +79,7 @@ type Source interface {
 
 // Observer hears an executor start and stop and reads the Source on its own
 // schedule. Both calls must return promptly. An engine notifies every
-// Observer registered with WorkerEngine.Observe, and its storage backend if
-// that is an Observer (how RunnerQ Cloud's adapter reports hosted workers).
+// Observer registered with WorkerEngine.Observe.
 type Observer interface {
 	ExecutorStarted(src Source)
 	ExecutorStopped(id string)

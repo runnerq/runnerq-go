@@ -3,10 +3,8 @@ module github.com/alob-mtc/runnerq-go
 go 1.27
 
 require (
-	github.com/coder/websocket v1.8.15
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/runnerq/runnerq-spec v0.4.1-0.20261002221630-92373c47b3f6
 )
 
 require (

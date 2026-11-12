@@ -298,7 +298,7 @@ func TestSignalByKeyUnknownKeyIsNotFound(t *testing.T) {
 }
 
 // A delivered signal is recorded with its human name — on the result row (so it
-// shows in the console's Steps/Signals views) and on the Signaled event. (C.)
+// shows in step listings) and on the Signaled event. (C.)
 func TestSignalRecordedWithName(t *testing.T) {
 	h := &funcHandler{fn: func(ctx ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
 		return ctx.WaitForSignal("approve", 0)

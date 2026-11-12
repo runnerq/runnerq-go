@@ -43,10 +43,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The conductor agent is its own module (conductor/go.mod), so the SDK
+      # doesn't depend on what only the agent needs.
+      - name: Build and vet the conductor module
+        run: go -C conductor build ./... && go -C conductor vet ./...
+
       # internal/spec and the conductor's wire types are generated from the
       # pinned runnerq-spec submodule.
       - name: Generated spec code is current
-        run: go generate ./internal/spec ./conductor/internal/wire && git diff --exit-code
+        run: go generate ./internal/spec && go -C conductor generate ./internal/wire && git diff --exit-code
 
       # gofmt check — fails the job if any tracked .go file would be
       # rewritten. Cheap and catches accidental mis-formatting before review.
@@ -66,7 +71,7 @@ jobs:
       - name: Test
         env:
           RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
-        run: go test ./... -race -count=1 -timeout=5m
+        run: go test ./... -race -count=1 -timeout=5m && go -C conductor test ./... -race -count=1 -timeout=5m
 
       # runnerq-spec's cross-language scenarios, through this SDK's driver.
       - name: Conformance

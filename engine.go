@@ -141,14 +141,13 @@ func (e *WorkerEngine) Changed() <-chan struct{} {
 
 // Announce sends a every lifecycle change this engine makes from now on:
 // submissions through its ActivityExecutors, claims and successes. nil stops.
-// Safe at any time; RunnerQ Cloud's agent uses it while someone is watching.
+// Safe at any time; the conductor agent uses it while a console watches.
 func (e *WorkerEngine) Announce(a executor.Announcer) {
 	e.announce.set(a)
 }
 
 // Observe tells o when this engine starts and stops, so it can report the
-// engine's Snapshot while it runs. A backend that is an executor.Observer is
-// attached automatically. Call before Start.
+// engine's Snapshot while it runs. Call before Start.
 func (e *WorkerEngine) Observe(o executor.Observer) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -231,7 +230,7 @@ func (e *WorkerEngine) QueueName() string {
 }
 
 // InstanceID is this engine's random, per-construction identity: it prefixes
-// claim tokens and is RunnerQ Cloud's executor id.
+// claim tokens and is the executor id in its snapshots.
 func (e *WorkerEngine) InstanceID() string {
 	return e.instanceID
 }
@@ -332,13 +331,13 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 		e.mu.Unlock()
 		return &WorkerError{Kind: ErrConfiguration, Message: "retention values must be non-negative"}
 	}
-	managedMaintenance := false
-	if managed, ok := e.backend.(storage.ManagedMaintenanceStorage); ok {
-		managedMaintenance = managed.MaintenanceManaged()
+	selfMaintained := false
+	if s, ok := e.backend.(storage.SelfMaintainingStorage); ok {
+		selfMaintained = s.MaintainsItself()
 	}
-	if managedMaintenance && e.config.Retention != nil {
+	if selfMaintained && e.config.Retention != nil {
 		e.mu.Unlock()
-		return &WorkerError{Kind: ErrConfiguration, Message: "configure retention on the managed storage service"}
+		return &WorkerError{Kind: ErrConfiguration, Message: "this storage applies retention itself: configure retention there"}
 	}
 	if q, ok := e.queue.(activityTypeFilter); ok {
 		q.setActivityTypes(types)
@@ -347,9 +346,6 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 	e.startedAt = time.Now().UTC()
 	e.servedTypes = slices.Clone(types)
 	observers := slices.Clone(e.observers)
-	if o, ok := e.backend.(executor.Observer); ok {
-		observers = append(observers, o)
-	}
 	e.running.Store(true)
 	// Parent cancellation stops intake below. Handler and persistence lifetime
 	// ends after the drain, including when the caller uses a signal context.
@@ -375,14 +371,14 @@ func (e *WorkerEngine) Start(ctx context.Context) error {
 		})
 	}
 
-	if !managedMaintenance {
+	if !selfMaintained {
 		wg.Go(func() {
 			e.runReaperProcessor(intakeCtx)
 		})
 	}
 
 	// The backend elects one retention sweeper per queue.
-	if e.config.Retention != nil && !managedMaintenance {
+	if e.config.Retention != nil && !selfMaintained {
 		wg.Go(func() {
 			e.runRetentionProcessor(intakeCtx)
 		})

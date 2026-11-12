@@ -127,7 +127,7 @@ Consequences:
 
 Parked activities (durable sleeps, signal waits, parents awaiting children)
 sit in a dedicated `waiting` state — distinct from `scheduled` (a `Delay`d
-activity) and `processing`. RunnerQ Cloud shows it with the reason; signal delivery wakes only
+activity) and `processing`. Queries show it with the reason; signal delivery wakes only
 `waiting` rows, never `Delay`-scheduled ones.
 
 ## Putting it together
