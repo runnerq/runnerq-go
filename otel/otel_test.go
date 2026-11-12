@@ -62,7 +62,7 @@ func TestOneTraceAcrossRetryAndSleep(t *testing.T) {
 	}
 	var attempts atomic.Int32
 	engine.RegisterActivityWithName("order", handler{fn: func(c runnerq.ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
-		if _, err := c.RunStep("reserve", func(context.Context) (string, error) { return "r1", nil }); err != nil {
+		if _, err := runnerq.RunStep(c, "reserve", func(context.Context) (string, error) { return "r1", nil }); err != nil {
 			return nil, err
 		}
 		if attempts.Add(1) == 1 {
@@ -79,7 +79,7 @@ func TestOneTraceAcrossRetryAndSleep(t *testing.T) {
 		if _, err := fut.GetResult(c.Ctx); err != nil {
 			return nil, err
 		}
-		out, err := c.RunStep("ship", func(context.Context) (string, error) { return "shipped", nil })
+		out, err := runnerq.RunStep(c, "ship", func(context.Context) (string, error) { return "shipped", nil })
 		if err != nil {
 			return nil, err
 		}

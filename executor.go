@@ -369,14 +369,17 @@ func (w *ActivityExecutor) scopedForChild(parent *activity) *ActivityExecutor {
 	}
 }
 
-// Activity starts a spawn of the activity served by handler type T, as
+// Activity starts a spawn on w of the activity served by handler type T, as
 // registered with RegisterActivity, so the two cannot drift:
 //
-//	fut, err := ctx.ActivityExecutor.Activity[ResizeImage]().Payload(p).Execute(ctx.Ctx)
+//	fut, err := runnerq.Activity[ResizeImage](ctx.ActivityExecutor).Payload(p).Execute(ctx.Ctx)
 //
 // T may be the handler struct or a pointer to it. Handlers registered under
-// a pinned name (RegisterActivityWithName) are spawned with ActivityNamed.
-func (w *ActivityExecutor) Activity[T any]() *ActivityBuilder {
+// a pinned name (RegisterActivityWithName) are spawned with
+// ActivityExecutor.ActivityNamed.
+//
+// On Go 1.27 and later, w.Activity[T]() is the same call as a method.
+func Activity[T any](w *ActivityExecutor) *ActivityBuilder {
 	return w.ActivityNamed(NameOf[T]())
 }
 

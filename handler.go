@@ -122,18 +122,20 @@ func (c ActivityContext) run(name string, fn func(context.Context) (json.RawMess
 // activity's, so the activity timeout still bounds it.
 type Step[R any] func(ctx context.Context) (R, error)
 
-// RunStep is the typed form of Run: fn's result is stored as JSON and a
-// replaying attempt decodes it into R, so R must round-trip through
+// RunStep is the typed form of ActivityContext.Run: fn's result is stored as
+// JSON and a replaying attempt decodes it into R, so R must round-trip through
 // encoding/json. Semantics and step-name rules are Run's.
 //
-//	receipt, err := ctx.RunStep("charge", func(c context.Context) (Receipt, error) {
+//	receipt, err := runnerq.RunStep(ctx, "charge", func(c context.Context) (Receipt, error) {
 //	    return payments.Charge(c, orderID, amount)
 //	})
 //
 // A stored result that no longer decodes into R (the type changed between
 // deploys) is a NonRetryError. So is an encode failure, which is stored as a
 // permanent step failure because the side effect has already happened.
-func (c ActivityContext) RunStep[R any](name string, fn Step[R]) (R, error) {
+//
+// On Go 1.27 and later, ctx.RunStep(name, fn) is the same call as a method.
+func RunStep[R any](c ActivityContext, name string, fn Step[R]) (R, error) {
 	var zero R
 	raw, err := c.run(name, func(parent context.Context) (json.RawMessage, error) {
 		stepCtx, cancel := context.WithCancel(parent)

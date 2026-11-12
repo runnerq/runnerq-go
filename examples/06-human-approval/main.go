@@ -85,8 +85,7 @@ func main() {
 	}()
 
 	// Start the workflow; its activity ID is the handle we signal.
-	future, err := engine.GetActivityExecutor().
-		Activity[ExpenseApproval]().
+	future, err := runnerq.Activity[ExpenseApproval](engine.GetActivityExecutor()).
 		Payload(json.RawMessage(`{"amount":4200,"who":"katherine"}`)).
 		Execute(ctx)
 	if err != nil {
@@ -110,7 +109,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/approve", decide(true))
 	mux.HandleFunc("/reject", decide(false))
-	srv := &http.Server{Addr: ":8080", Handler: mux}
+	srv := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("approval server failed (port in use?): %v", err)

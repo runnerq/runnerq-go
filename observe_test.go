@@ -246,7 +246,7 @@ func TestTracerSpans(t *testing.T) {
 	rig := newStepsRig(t, func(e *WorkerEngine) {
 		e.SetTracer(tracer)
 		e.RegisterActivityWithName("parent", &funcHandler{fn: func(ctx ActivityContext, _ json.RawMessage) (json.RawMessage, error) {
-			if _, err := ctx.RunStep("first", func(context.Context) (int, error) { return 1, nil }); err != nil {
+			if _, err := RunStep(ctx, "first", func(context.Context) (int, error) { return 1, nil }); err != nil {
 				return nil, err
 			}
 			if runs.Add(1) == 1 {

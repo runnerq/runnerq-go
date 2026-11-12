@@ -3,18 +3,29 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every PR, including PRs stacked on other branches.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Go ${{ matrix.go }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported toolchains: go.mod's floor through the latest release.
+        go: ['1.25', '1.26', '1.27']
+    env:
+      # Build with exactly the matrix toolchain. Without this a dependency
+      # declaring a newer go line would silently switch toolchains.
+      GOTOOLCHAIN: local
+      RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: runnerq_test
@@ -32,7 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache: true
 
       # `go build ./...` compiles every package + every `main` in examples,
@@ -56,11 +67,13 @@ jobs:
       # internal/spec and the conductor's wire types are generated from the
       # pinned runnerq-spec submodule.
       - name: Generated spec code is current
+        if: matrix.go == '1.27'
         run: go generate ./internal/spec && go -C conductor generate ./internal/wire && git diff --exit-code
 
       # gofmt check — fails the job if any tracked .go file would be
       # rewritten. Cheap and catches accidental mis-formatting before review.
       - name: gofmt
+        if: matrix.go == '1.27'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -74,14 +87,96 @@ jobs:
       # without a database). -race is non-negotiable for an engine this
       # concurrency-heavy.
       - name: Test
-        env:
-          RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
         run: go test ./... -race -count=1 -timeout=5m && go -C conductor test ./... -race -count=1 -timeout=5m && go -C otel test ./... -race -count=1 -timeout=5m
 
       # runnerq-spec's cross-language scenarios, through this SDK's driver.
       - name: Conformance
-        env:
-          RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
         run: |
           go build -o "$RUNNER_TEMP/conformancedriver" ./internal/conformancedriver
           go run -C spec/tools/conformance . -v -driver go="$RUNNER_TEMP/conformancedriver"
+
+  postgres:
+    name: Postgres ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every Postgres major still supported upstream.
+        postgres: ['14', '15', '16', '17', '18']
+    env:
+      GOTOOLCHAIN: local
+      RUNNERQ_TEST_DSN: postgres://postgres:test@localhost:5432/runnerq_test
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: runnerq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Test
+        run: go test ./... -race -count=1 -timeout=5m && go -C conductor test ./... -race -count=1 -timeout=5m
+
+      - name: Conformance
+        run: |
+          go build -o "$RUNNER_TEMP/conformancedriver" ./internal/conformancedriver
+          go run -C spec/tools/conformance . -v -driver go="$RUNNER_TEMP/conformancedriver"
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The latest patch release, so standard-library findings reflect what a
+      # current toolchain ships.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+      - name: SDK
+        run: govulncheck ./...
+
+      - name: Conductor
+        run: govulncheck -C conductor ./...
+
+  gosec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+
+      # Covers the SDK and the conductor module. Exclusions:
+      # - G115 (integer conversion overflow): the conversions are between the
+      #   API's unsigned counts and durations and Postgres's signed integer
+      #   columns, with values far inside both ranges.
+      # - examples/: runnable demos, not part of the importable API.
+      # - spec/: the runnerq-spec submodule, scanned in its own repository.
+      # Individual findings that are intended carry a `#nosec <rule> -- reason`.
+      - name: gosec
+        run: gosec -exclude=G115 -exclude-dir=examples -exclude-dir=spec ./...

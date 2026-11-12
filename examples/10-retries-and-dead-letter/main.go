@@ -69,8 +69,7 @@ func main() {
 		backend.Close()
 	}()
 
-	future, err := engine.GetActivityExecutor().
-		Activity[ChargeCard]().
+	future, err := runnerq.Activity[ChargeCard](engine.GetActivityExecutor()).
 		MaxRetries(2). // 2 attempts, then dead-letter
 		Payload(json.RawMessage(`{"amount":4200}`)).
 		Execute(ctx)

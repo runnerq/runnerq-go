@@ -52,7 +52,7 @@ func retryStorage(ctx context.Context, operation string, metrics LabeledMetricsS
 		}
 		metrics.AddCounter(MetricStorageRetry, 1, labels)
 		slog.Warn("Retrying storage operation", "operation", operation, "pending_for", time.Since(started), "error", err)
-		wait := time.Duration(float64(delay) * (0.95 + rand.Float64()*0.1))
+		wait := time.Duration(float64(delay) * (0.95 + rand.Float64()*0.1)) // #nosec G404 -- backoff jitter, not a secret
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
