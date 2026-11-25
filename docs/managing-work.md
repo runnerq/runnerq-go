@@ -9,10 +9,18 @@ backend, _ := postgres.New(ctx, dsn, "my_app")
 client := runnerq.NewClient(backend)
 ```
 
+To trace its submissions and signals, give it a tracer (see
+[observability](observability.md#tracing)):
+
+```go
+client := runnerq.NewClient(backend, runnerq.WithTracer(rqotel.NewTracer()))
+```
+
 An engine hands out a client bound to it with `engine.Client()`. That client
-announces submissions like the engine does, spawns children when called on a
-handler's context, and stops a handler the engine is running at once when it
-cancels that handler's activity.
+announces and traces submissions like the engine does, traces signals with the
+engine's tracer, spawns children when called on a handler's context, and stops
+a handler the engine is running at once when it cancels that handler's
+activity.
 
 ## Submitting, signalling, awaiting
 

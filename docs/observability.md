@@ -72,6 +72,7 @@ gauges. The default is `runnerq.NoopMetrics`.
 | `activity_heartbeat_failed` | counter | a claim renewal failed and will be retried on the next beat |
 | `activity_yielded` | counter | parked for a durable wait (sleep/signal/await) |
 | `activity_trees_swept` | counter | workflow trees deleted by retention (`queue` label only) |
+| `schedule_fires` | counter | activities enqueued by firing due schedules (`queue` label only) |
 | `storage_retry` | counter | a storage write (completion, failure, park, checkpoint, dependency registration) failed transiently and is being retried |
 | `activity_claim_lag` | histogram (s) | how long an activity waited, from when it was due, until a worker started it |
 | `activity_execution` | histogram (s) | how long an attempt took here, until its outcome was recorded |
@@ -95,17 +96,18 @@ fleet, turning gauges on for a few workers is enough.
 
 The core module depends on no tracing library. It calls a `runnerq.Tracer`
 (`Start(ctx, name, parent, attrs...)` and `Traceparent(ctx)`), which
-`Builder.Tracer` or `engine.SetTracer` sets, for spans named by the `Span*`
-constants:
+`Builder.Tracer` or `engine.SetTracer` sets (for a standalone `Client`,
+`runnerq.NewClient(backend, runnerq.WithTracer(t))`), for spans named by the
+`Span*` constants:
 
 | Span | When |
 |---|---|
-| `runnerq.enqueue` | each enqueue from the engine's executors, ended once the insert commits |
+| `runnerq.enqueue` | each enqueue from the engine's executors or a client, ended once the insert commits |
 | `runnerq.attempt` | each attempt, from claim until its outcome is recorded |
 | `runnerq.step` | each `Run`/`RunStep` that runs its function (replays start none) |
 | `runnerq.sleep` | each `Sleep` reached; ends `elapsed` or `parked` |
 | `runnerq.signal.wait` | each `WaitForSignal`; ends `received`, `parked` or `timeout` |
-| `runnerq.signal.send` | `engine.Signal` and `engine.SignalByKey` |
+| `runnerq.signal.send` | `Signal` and `SignalByKey` on an engine or a client |
 
 Every span ends with a `runnerq.outcome` attribute, and with its error when
 there is one. Its other attributes are `runnerq.queue`, `runnerq.activity.type`,

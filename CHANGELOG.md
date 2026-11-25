@@ -86,6 +86,13 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   `storagetest` (including 50 claimers against a limit of 10). Needs schema
   migration `0005_limits` and the index `idx_runnerq_processing_v2`, which
   replaces `idx_runnerq_processing`. See [docs/limits.md](docs/limits.md).
+- `runnerq.NewClient(backend, opts...)` takes options; `WithTracer(t)`
+  traces a standalone client's submissions (an enqueue span and its stored
+  traceparent) and signals, as an engine's tracer does. `Client.Signal` and
+  `Client.SignalByKey` on an engine's client are now traced by the engine's
+  tracer, like `engine.Signal`.
+- `MetricScheduleFires` (`schedule_fires`, label `queue`): activities
+  enqueued by firing due schedules, now in runnerq-spec's metric catalog.
 
 ### Changed
 
