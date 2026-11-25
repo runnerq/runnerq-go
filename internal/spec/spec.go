@@ -56,6 +56,17 @@ const ScheduleCatchUpGraceSeconds = 60
 // (schedules.md).
 const ScheduleCatchUpLimitDefault = 100
 
+// LimitsRefreshMs is how stale a worker's knowledge of which activity types of
+// its queue have a limit may be: a limit added to an unlimited type binds
+// every worker within this many milliseconds (limits.md). Changes to an
+// existing limit, and its removal, bind the next claim.
+const LimitsRefreshMs = 1000
+
+// LimitProbeMs is how soon a worker claims again after a limit held back work
+// that was otherwise claimable, instead of waiting for a work notice: a slot
+// freed elsewhere or a refilled rate token announces nothing (limits.md).
+const LimitProbeMs = 200
+
 // The kinds of storage error. The numbers are stored (runnerq_commands
 // err_kind) and sent on the wire, so they never change.
 const (

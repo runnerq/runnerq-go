@@ -90,7 +90,7 @@ func NewSchedules(backend storage.Storage, opts ...ClientOption) (*Schedules, er
 	if !ok {
 		return nil, &WorkerError{Kind: ErrConfiguration, Message: fmt.Sprintf("storage %T does not support schedules", backend)}
 	}
-	var o clientOptions
+	var o clientConfig
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -200,7 +200,7 @@ func (e *WorkerEngine) runScheduleFirer(ctx context.Context, store storage.Sched
 		case <-ticker.C:
 			n, err := store.FireDueSchedules(ctx, scheduleFireBatch)
 			if n > 0 {
-				e.metrics.AddCounter("schedule_fires", uint64(n), MetricLabels{Queue: e.tel.queueName()})
+				e.metrics.AddCounter(MetricScheduleFires, uint64(n), MetricLabels{Queue: e.tel.queueName()})
 			}
 			if err != nil && ctx.Err() == nil {
 				slog.Error("Failed to fire schedules", "error", err)

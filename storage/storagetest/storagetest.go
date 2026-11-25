@@ -19,7 +19,7 @@
 // CheckpointStorage, DependencyStorage, AttemptLeaseStorage and SpawnStorage
 // are required: their tests fail without them. Tests for BatchQueueStorage,
 // ResultWaiter, ResultNotifier, QueryStorage, CommandStorage and
-// ScheduleStorage are skipped when absent (the version tests use them where
+// ScheduleStorage and LimitStorage are skipped when absent (the version tests use them where
 // present); schedule firing tests also need
 // the harness to implement ScheduleClock.
 package storagetest
@@ -69,6 +69,7 @@ func Run(t *testing.T, h Harness) {
 		{"Commands", commandTests},
 		{"Schedules", scheduleTests},
 		{"Versions", versionTests},
+		{"Limits", limitTests},
 	} {
 		t.Run(g.name, func(t *testing.T) {
 			for _, tc := range g.tests {

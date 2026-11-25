@@ -126,6 +126,11 @@ schedule so concurrent engines skip it. Use `storage.ScheduleFireTimes` and
 `storage.ScheduledActivity` so the fire times match the other SDKs'. Engines
 fire schedules whenever the backend implements it. See [Schedules](schedules.md).
 
+`storage.LimitStorage` (also optional) stores per-type limits, and a backend
+that implements it must enforce them in `Dequeue` and `DequeueBatch`: a claim
+never takes a limited type past its running cap or its rate's tokens, however
+many engines claim at once. See [Limits](limits.md).
+
 ### Proving a backend durable
 
 `storage/storagetest` is the conformance suite: it states every behaviour the

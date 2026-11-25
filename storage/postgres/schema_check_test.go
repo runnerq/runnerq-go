@@ -179,14 +179,24 @@ func TestSchemaInitIgnoresSameNamedIndexInOtherSchema(t *testing.T) {
 // with 40P01. With the lock held externally and the fast path disabled, a
 // booting backend must wait without any session blocked on the advisory
 // lock, then complete once the lock is released.
+//
+// The tables live in a schema of their own: other test packages share the
+// database and boot backends against public, and one booting between the
+// index drop and the lock would restore the index and let the waiter take
+// the fast path.
 func TestSchemaInitWaitsForLockWithoutPinningSnapshot(t *testing.T) {
-	b := testBackend(t)
+	scoped, admin, schema := testSchemaDSN(t, "rq_lockpoll_")
 	ctx := context.Background()
-	if _, err := b.pool.Exec(ctx, `DROP INDEX IF EXISTS idx_runnerq_parent_id`); err != nil {
+	b, err := WithConfig(ctx, scoped, "t_lockpoll", 30_000, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	if _, err := admin.Exec(ctx, `DROP INDEX `+schema+`.idx_runnerq_parent_id`); err != nil {
 		t.Fatal(err)
 	}
 
-	holder, err := b.pool.Acquire(ctx)
+	holder, err := admin.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,17 +218,32 @@ func TestSchemaInitWaitsForLockWithoutPinningSnapshot(t *testing.T) {
 
 	connectCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	done := make(chan *PostgresBackend, 1)
-	go func() { done <- testBackendNamedCtx(t, connectCtx, "t_lockpoll") }()
+	type result struct {
+		b   *PostgresBackend
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		other, err := WithConfig(connectCtx, scoped, "t_lockpoll", 30_000, 5)
+		done <- result{other, err}
+	}()
 
 	select {
-	case other := <-done:
-		other.Close()
-		t.Fatal("backend initialized while another session held the schema lock")
+	case r := <-done:
+		if r.b != nil {
+			r.b.Close()
+		}
+		t.Fatalf("backend init returned while another session held the schema lock: %v", r.err)
 	case <-time.After(500 * time.Millisecond):
 	}
+	// Only waiters on the schema lock count: other packages' sessions may be
+	// queued on their own transaction-level advisory locks. A bigint key
+	// appears in pg_locks as classid (high half) and objid (low half).
 	var blocked int
-	if err := holder.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'`).Scan(&blocked); err != nil {
+	if err := holder.QueryRow(ctx, `SELECT count(*) FROM pg_locks
+		WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1
+		  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		  AND (classid::bigint << 32 | objid::bigint) = $1`, schemaAdvisoryLockKey).Scan(&blocked); err != nil {
 		t.Fatal(err)
 	}
 	if blocked != 0 {
@@ -227,12 +252,20 @@ func TestSchemaInitWaitsForLockWithoutPinningSnapshot(t *testing.T) {
 
 	release()
 	select {
-	case other := <-done:
-		other.Close()
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("backend init after the schema lock was released: %v", r.err)
+		}
+		r.b.Close()
 	case <-time.After(15 * time.Second):
 		t.Fatal("backend did not initialize after the schema lock was released")
 	}
 
+	b, err = WithConfig(ctx, scoped, "t_lockpoll", 30_000, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
 	conn, err := b.pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -243,21 +276,21 @@ func TestSchemaInitWaitsForLockWithoutPinningSnapshot(t *testing.T) {
 	}
 }
 
-// A database from before runnerq_inputs (payload inline on the activity row)
-// is migrated on connect: payloads move to runnerq_inputs, the column is
-// dropped, and queued work is still claimed with its payload.
-func TestSchemaMovesInlinePayloadsToInputs(t *testing.T) {
+// testSchemaDSN creates a schema dropped at cleanup and returns a DSN whose
+// search_path points at it, plus an admin pool on the plain DSN.
+func testSchemaDSN(t *testing.T, prefix string) (scoped string, admin *pgxpool.Pool, schema string) {
+	t.Helper()
 	dsn := os.Getenv("RUNNERQ_TEST_DSN")
 	if dsn == "" {
 		t.Skip("RUNNERQ_TEST_DSN not set; skipping integration test")
 	}
 	ctx := context.Background()
-	schema := "rq_inline_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	schema = prefix + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	if _, err := admin.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +299,15 @@ func TestSchemaMovesInlinePayloadsToInputs(t *testing.T) {
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	scoped := dsn + sep + "search_path=" + schema
+	return dsn + sep + "search_path=" + schema, admin, schema
+}
+
+// A database from before runnerq_inputs (payload inline on the activity row)
+// is migrated on connect: payloads move to runnerq_inputs, the column is
+// dropped, and queued work is still claimed with its payload.
+func TestSchemaMovesInlinePayloadsToInputs(t *testing.T) {
+	scoped, admin, schema := testSchemaDSN(t, "rq_inline_")
+	ctx := context.Background()
 
 	// Today's schema, taken back to the inline-payload layout.
 	b, err := WithConfig(ctx, scoped, "inline", 30_000, 5)

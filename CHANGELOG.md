@@ -89,6 +89,25 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   `0004_code_version` (one nullable column, applied automatically). Without a
   version nothing changes.
 
+- Concurrency and rate limits per activity type: `MaxConcurrent(n)` and
+  `RateLimit(n, per)` on `RegisterActivity` cap a type across every worker
+  of the queue (stored in `runnerq_limits`, upserted on start), and
+  `MaxConcurrentPerWorker(n)` caps it on one engine. `Client.SetLimit`,
+  `GetLimit`, `ListLimits` and `DeleteLimit` change limits at runtime. The
+  running count is read from the activities on each claim, so it never
+  drifts; waiting and retrying activities don't count. Claims of unlimited
+  types are unchanged. New optional `storage.LimitStorage`, covered by
+  `storagetest` (including 50 claimers against a limit of 10). Needs schema
+  migration `0005_limits` and the index `idx_runnerq_processing_v2`, which
+  replaces `idx_runnerq_processing`. See [docs/limits.md](docs/limits.md).
+- `runnerq.NewClient(backend, opts...)` takes options; `WithTracer(t)`
+  traces a standalone client's submissions (an enqueue span and its stored
+  traceparent) and signals, as an engine's tracer does. `Client.Signal` and
+  `Client.SignalByKey` on an engine's client are now traced by the engine's
+  tracer, like `engine.Signal`.
+- `MetricScheduleFires` (`schedule_fires`, label `queue`): activities
+  enqueued by firing due schedules, now in runnerq-spec's metric catalog.
+
 ### Changed
 
 - **Breaking for storage backends:** `QueueStorage.Dequeue` and
@@ -96,6 +115,8 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   the activity types (version pinning); a backend must claim only unstamped
   activities and those whose `CodeVersion` is listed when it is non-empty,
   and store a child's root's `CodeVersion` (`storagetest` checks both).
+- `RegisterActivity` and `RegisterActivityWithName` take options
+  (`...RegisterOption`); existing calls compile unchanged.
 - Go 1.25 is the minimum (was 1.27 on `main`); CI tests Go 1.25, 1.26 and
   1.27 and Postgres 14 to 18.
 - Leaner storage: about half the writes and storage per activity; lease

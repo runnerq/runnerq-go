@@ -27,30 +27,43 @@ import (
 type Client struct {
 	backend   storage.Storage
 	exec      *ActivityExecutor
+	tel       *telemetry
 	queue     string
 	interrupt func(uuid.UUID) bool // the engine's Interrupt, for engine-bound clients
 }
 
+// ClientOption configures NewClient and NewSchedules.
+type ClientOption func(*clientConfig)
+
+type clientConfig struct {
+	tracer  Tracer
+	version string
+}
+
+// WithTracer traces the client's submissions (an enqueue span, whose
+// traceparent the activity stores) and signals (a signal-send span), as an
+// engine's Tracer traces its own; see Tracer. Without it the client starts no
+// spans, though a submission still stores the caller's traceparent.
+func WithTracer(t Tracer) ClientOption {
+	return func(c *clientConfig) { c.tracer = t }
+}
+
 // NewClient returns a Client on backend.
 func NewClient(backend storage.Storage, opts ...ClientOption) *Client {
-	var o clientOptions
+	var cfg clientConfig
 	for _, opt := range opts {
-		opt(&o)
+		opt(&cfg)
 	}
-	exec := newActivityExecutor(newBackendQueueAdapter(backend, nil), DefaultMaxActivityDepth, &announcer{}, nil)
-	exec.version = o.version
+	queue := queueOf(backend)
+	tel := &telemetry{tracer: cfg.tracer, queue: queue}
+	exec := newActivityExecutor(newBackendQueueAdapter(backend, nil), DefaultMaxActivityDepth, &announcer{}, tel)
+	exec.version = cfg.version
 	return &Client{
 		backend: backend,
 		exec:    exec,
-		queue:   queueOf(backend),
+		tel:     tel,
+		queue:   queue,
 	}
-}
-
-// ClientOption configures NewClient and NewSchedules.
-type ClientOption func(*clientOptions)
-
-type clientOptions struct {
-	version string
 }
 
 // ClientVersion pins the roots the client submits, and the schedules it
@@ -58,17 +71,19 @@ type clientOptions struct {
 // does with its WorkerConfig.Version. Without it they are unstamped, and
 // any worker may run them.
 func ClientVersion(v string) ClientOption {
-	return func(o *clientOptions) { o.version = v }
+	return func(o *clientConfig) { o.version = v }
 }
 
 // Client returns a Client on the engine's backend. Its submissions are
-// announced like the engine's own, a spawn on a handler's context becomes
-// that handler's child (as with GetActivityExecutor), and a Cancel stops a
-// handler this engine is running at once.
+// announced and traced like the engine's own, a spawn on a handler's context
+// becomes that handler's child (as with GetActivityExecutor), its signals are
+// traced like Signal, and a Cancel stops a handler this engine is running at
+// once.
 func (e *WorkerEngine) Client() *Client {
 	return &Client{
 		backend:   e.backend,
 		exec:      e.GetActivityExecutor(),
+		tel:       e.tel,
 		queue:     queueOf(e.backend),
 		interrupt: e.Interrupt,
 	}
@@ -101,15 +116,16 @@ func (c *Client) Result(ctx context.Context, activityID uuid.UUID) (json.RawMess
 	return c.Future(activityID).GetResult(ctx)
 }
 
-// Signal delivers a signal to an activity (SignalActivity).
+// Signal delivers a signal to an activity (SignalActivity), traced by the
+// client's tracer.
 func (c *Client) Signal(ctx context.Context, activityID uuid.UUID, name string, payload json.RawMessage) error {
-	return SignalActivity(ctx, c.backend, activityID, name, payload)
+	return tracedSignal(ctx, c.tel, c.backend, activityID, name, payload)
 }
 
 // SignalByKey delivers a signal to the activity of activityType that owns
-// idempotencyKey (SignalActivityByKey).
+// idempotencyKey (SignalActivityByKey), traced like Signal.
 func (c *Client) SignalByKey(ctx context.Context, activityType, idempotencyKey, name string, payload json.RawMessage) error {
-	return SignalActivityByKey(ctx, c.backend, activityType, idempotencyKey, name, payload)
+	return tracedSignalByKey(ctx, c.tel, c.backend, activityType, idempotencyKey, name, payload)
 }
 
 // Get returns an activity with its payload, result and last error. It fails

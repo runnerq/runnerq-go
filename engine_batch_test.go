@@ -21,6 +21,7 @@ import (
 type batchRequest struct {
 	limit  int
 	prefix string
+	types  []string
 }
 
 type batchReply struct {
@@ -51,9 +52,9 @@ func newScriptedBatchQueue() *scriptedBatchQueue {
 	}
 }
 
-func (q *scriptedBatchQueue) DequeueBatch(ctx context.Context, limit int, _ time.Duration, prefix string) ([]claimedActivity, error) {
+func (q *scriptedBatchQueue) DequeueBatch(ctx context.Context, limit int, _ time.Duration, prefix string, types []string) ([]claimedActivity, error) {
 	select {
-	case q.requests <- batchRequest{limit: limit, prefix: prefix}:
+	case q.requests <- batchRequest{limit: limit, prefix: prefix, types: types}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -351,7 +352,7 @@ func TestBatchAdapterCapabilityAndContract(t *testing.T) {
 			if !ok {
 				t.Fatal("batch-capable backend not exposed as batchActivityQueue")
 			}
-			got, err := q.DequeueBatch(context.Background(), tc.limit, time.Second, "p")
+			got, err := q.DequeueBatch(context.Background(), tc.limit, time.Second, "p", nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("got %d claims and no error, want a contract error", len(got))

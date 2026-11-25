@@ -2,6 +2,8 @@ package storagetest
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 // and lease recovery, the repin command and versioned schedules.
 var versionTests = []conformanceTest{
 	{"ClaimsServeOnlyTheirVersions", testVersionedClaim},
+	{"LimitedClaimsServeOnlyTheirVersions", testLimitedVersionedClaim},
+	{"ConcurrencyLimitCountsEveryVersion", testLimitCountsEveryVersion},
 	{"ChildrenTakeTheRootsVersion", testChildVersion},
 	{"ParkedWorkWakesOnlyForItsVersion", testVersionedWake},
 	{"VersionSurvivesRetriesAndRecovery", testVersionSurvives},
@@ -66,6 +70,78 @@ var (
 	servesA = []string{"A"}
 	servesB = []string{"B"}
 )
+
+// The limited claim and its unlimited fill must both respect versions.
+// Ineligible work cannot spend the bucket, even when it has higher priority.
+func testLimitedVersionedClaim(t *testing.T, h Harness) {
+	for _, batch := range []bool{false, true} {
+		for _, types := range [][]string{nil, {"t"}, {"t", "u"}} {
+			t.Run(fmt.Sprintf("batch=%t/types=%v", batch, types), func(t *testing.T) {
+				s := newSuite(t, h)
+				s.setLimit(storage.Limit{ActivityType: "t", MaxConcurrent: 2, RateLimit: 2, RatePeriod: time.Hour})
+				wrong := s.enqueue(activity(withType("t"), withVersion("B"), withPriority(100)))
+				a := s.enqueue(activity(withType("t"), withVersion("A")))
+				plain := s.enqueue(activity(withType("t")))
+				s.enqueue(activity(withType("u"), withVersion("B"), withPriority(100)))
+				u := s.enqueue(activity(withType("u"), withVersion("A")))
+				want := []uuid.UUID{a.ID, plain.ID}
+				if len(types) != 1 {
+					want = append(want, u.ID)
+				}
+				var got []storage.DequeuedActivity
+				if batch {
+					bq := need[storage.BatchQueueStorage](t, s.b)
+					var err error
+					got, err = bq.DequeueBatch(s.ctx, "batch", 10, 0, types, servesA)
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					for range len(want) {
+						a := s.claimAs("single", servesA, types...)
+						if a == nil {
+							t.Fatal("versioned single claim returned no work")
+						}
+						got = append(got, storage.DequeuedActivity{Activity: *a, LeaseID: "single"})
+					}
+				}
+				if len(got) != len(want) {
+					t.Fatalf("claims %v, want IDs %v", claimedIDs(got), want)
+				}
+				for _, c := range got {
+					if !slices.Contains(want, c.Activity.ID) {
+						t.Fatalf("claimed ineligible activity %s version %q", c.Activity.ID, c.Activity.CodeVersion)
+					}
+					s.complete(c)
+				}
+				// Both eligible limited activities spent the two tokens. The
+				// wrong-version activity is still pending, not claimed or spent.
+				s.wantStatus(wrong.ID, "pending")
+				s.wantNothingFor(servesB, "t")
+			})
+		}
+	}
+}
+
+// A processing B activity occupies A's slot as well: the cap is fleet-wide.
+func testLimitCountsEveryVersion(t *testing.T, h Harness) {
+	s := newSuite(t, h)
+	s.setLimit(storage.Limit{ActivityType: "t", MaxConcurrent: 1})
+	b := s.enqueue(activity(withType("t"), withVersion("B")))
+	a := s.enqueue(activity(withType("t"), withVersion("A")))
+	s.wantClaimAs("B", servesB, b, "t")
+	s.wantNothingFor(servesA, "t")
+	if bq, ok := s.b.(storage.BatchQueueStorage); ok {
+		got, err := bq.DequeueBatch(s.ctx, "A", 10, 0, []string{"t"}, servesA)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("A batch while B occupies the slot: %v, %v", got, err)
+		}
+	}
+	if err := s.b.AckSuccess(s.ctx, b.ID, nil, "B"); err != nil {
+		t.Fatal(err)
+	}
+	s.wantClaimAs("A", servesA, a, "t")
+}
 
 // A worker serving versions claims unstamped work and work pinned to one of
 // them, in the usual order, singly and in batches; no versions claims all.
