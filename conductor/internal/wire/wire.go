@@ -525,6 +525,8 @@ type Activity struct {
 	LeaseExpiresAt string `json:"lease_expires_at,omitempty"`
 	// The executor running it, while running.
 	ExecutorID string `json:"executor_id,omitempty"`
+	// The code version it is pinned to (versions.md); absent when unstamped.
+	Version string `json:"version,omitempty"`
 	// While waiting.
 	Wait     *Wait             `json:"wait,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`

@@ -29,6 +29,7 @@ const (
 	CommandSetPriority CommandKind = "set_priority"
 	CommandDelete      CommandKind = "delete"
 	CommandSignal      CommandKind = "signal"
+	CommandRepin       CommandKind = "repin"
 )
 
 // CommandTarget selects what a command acts on: exactly one of IDs, a
@@ -62,7 +63,12 @@ type Command struct {
 	Priority      ActivityPriority
 	SignalName    string
 	SignalPayload json.RawMessage
+	// Version is the code version to pin the targets to (repin).
+	Version string
 }
+
+// MaxCodeVersionBytes bounds a code version's length.
+const MaxCodeVersionBytes = 256
 
 // CommandItem.Outcome values.
 const (

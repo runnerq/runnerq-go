@@ -3,7 +3,10 @@ package conductor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/runnerq/runnerq-go/conductor/internal/wire"
 	"github.com/runnerq/runnerq-go/storage"
@@ -112,4 +115,16 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestActivityCarriesVersion(t *testing.T) {
+	r := storage.ActivityRecord{ID: uuid.New(), RootID: uuid.New(), Version: "2026.11.2"}
+	if v := toActivity(r).Version; v != "2026.11.2" {
+		t.Fatalf("version %q", v)
+	}
+	r.Version = ""
+	raw, _ := json.Marshal(toActivity(r))
+	if strings.Contains(string(raw), `"version"`) {
+		t.Fatalf("an unstamped activity reports a version: %s", raw)
+	}
 }

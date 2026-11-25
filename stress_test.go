@@ -184,7 +184,7 @@ type countingBackend struct {
 	calls, claimed, maxLimit atomic.Int64
 }
 
-func (c *countingBackend) DequeueBatch(ctx context.Context, prefix string, limit int, timeout time.Duration, types []string) ([]storage.DequeuedActivity, error) {
+func (c *countingBackend) DequeueBatch(ctx context.Context, prefix string, limit int, timeout time.Duration, types, versions []string) ([]storage.DequeuedActivity, error) {
 	c.calls.Add(1)
 	for {
 		cur := c.maxLimit.Load()
@@ -192,7 +192,7 @@ func (c *countingBackend) DequeueBatch(ctx context.Context, prefix string, limit
 			break
 		}
 	}
-	out, err := c.PostgresBackend.DequeueBatch(ctx, prefix, limit, timeout, types)
+	out, err := c.PostgresBackend.DequeueBatch(ctx, prefix, limit, timeout, types, versions)
 	c.claimed.Add(int64(len(out)))
 	return out, err
 }

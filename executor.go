@@ -321,6 +321,7 @@ type ActivityExecutor struct {
 	lineage  *lineageScope // nil outside a handler
 	announce *announcer
 	tel      *telemetry // nil: no tracer
+	version  string     // pins roots; children take their root's
 }
 
 type lineageScope struct {
@@ -368,6 +369,7 @@ func (w *ActivityExecutor) scopedForChild(parent *activity) *ActivityExecutor {
 		maxDepth: w.maxDepth,
 		announce: w.announce,
 		tel:      w.tel,
+		version:  w.version,
 		lineage: &lineageScope{
 			parentID:   parent.ID,
 			rootID:     rootID,
@@ -434,6 +436,11 @@ func (w *ActivityExecutor) executeActivity(ctx context.Context, activityType str
 		a.ParentActivityID = &p
 		a.RootActivityID = w.lineage.rootID
 		a.Depth = w.lineage.childDepth
+	} else if w.version != "" {
+		if err := validateVersion(w.version); err != nil {
+			return nil, err
+		}
+		a.CodeVersion = w.version
 	}
 
 	if step != "" {

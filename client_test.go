@@ -7,6 +7,7 @@ package runnerq
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -400,6 +401,41 @@ func TestClientTracer(t *testing.T) {
 	}
 	if sends[0].attrs[AttrActivityID] != fut.ActivityID().String() || sends[1].attrs[AttrActivityID] != fut.ActivityID().String() {
 		t.Errorf("signal spans' activity ids %v, %v", sends[0].attrs[AttrActivityID], sends[1].attrs[AttrActivityID])
+	}
+}
+
+// Tracing and version options compose in either order.
+func TestClientTracerAndVersion(t *testing.T) {
+	for _, tracerFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tracerFirst=%t", tracerFirst), func(t *testing.T) {
+			backend := contractBackend(t, contractDSN(t), contractQueue())
+			tracer := &fakeTracer{}
+			opts := []ClientOption{ClientVersion("A"), WithTracer(tracer)}
+			if tracerFirst {
+				opts[0], opts[1] = opts[1], opts[0]
+			}
+			client := NewClient(backend, opts...)
+			ctx := context.Background()
+			fut, err := client.ActivityNamed("report").Payload(json.RawMessage(`{}`)).Execute(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap, err := backend.GetActivity(ctx, fut.ActivityID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			enqueues := tracer.named(SpanEnqueue)
+			if snap.CodeVersion == nil || *snap.CodeVersion != "A" || len(enqueues) != 1 ||
+				snap.Metadata[MetadataTraceparent] != enqueues[0].traceparent {
+				t.Fatalf("combined client options: snapshot %+v, enqueue spans %+v", snap, enqueues)
+			}
+			if err := client.Signal(ctx, fut.ActivityID(), "approve", nil); err != nil {
+				t.Fatal(err)
+			}
+			if sends := tracer.named(SpanSignalSend); len(sends) != 1 || sends[0].outcome != OutcomeSent {
+				t.Fatalf("combined client options signal spans %+v", sends)
+			}
+		})
 	}
 }
 

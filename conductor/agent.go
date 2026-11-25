@@ -72,7 +72,8 @@ type Config struct {
 	MetadataOnly bool
 	// Labels are executor tags (region, deploy version) the Cloud filters and
 	// groups by, merged over WorkerConfig.Labels. Prefer WorkerConfig.Labels,
-	// which every way of reporting to the Cloud carries.
+	// which every way of reporting to the Cloud carries. With a
+	// WorkerConfig.Version, the label "version" is always that version.
 	Labels map[string]string
 	// MaxConcurrentRequests bounds requests served at once (default 16);
 	// excess requests get "resource_exhausted" rather than queueing.
@@ -347,6 +348,10 @@ func (a *Agent) handshake(ctx context.Context, conn *websocket.Conn) (wire.Welco
 			labels = map[string]string{}
 		}
 		maps.Copy(labels, a.cfg.Labels)
+		// One version concept: the code version wins over a label of the name.
+		if info.Version != "" {
+			labels["version"] = info.Version
+		}
 	}
 	ex := wire.ExecutorInfo{
 		ID:             info.ID,

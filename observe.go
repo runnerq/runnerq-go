@@ -63,6 +63,7 @@ var gaugeStatuses = []string{
 // either way so a fleet's workers don't query in step.
 func (e *WorkerEngine) runGaugeSampler(ctx context.Context, interval time.Duration, types []string) {
 	reported := map[MetricLabels]bool{}
+	versions := &versionGauges{byVersion: map[string]bool{}, unserved: map[string]bool{}}
 	for {
 		wait := time.Duration(float64(interval) * (0.8 + 0.4*rand.Float64())) // #nosec G404 -- sampling jitter, not a secret
 		select {
@@ -71,6 +72,7 @@ func (e *WorkerEngine) runGaugeSampler(ctx context.Context, interval time.Durati
 		case <-time.After(wait):
 		}
 		e.sampleGauges(ctx, types, reported)
+		e.sampleVersionGauges(ctx, versions)
 	}
 }
 
@@ -153,4 +155,109 @@ func (e *WorkerEngine) sampleGauges(ctx context.Context, types []string, reporte
 
 func attemptAttr(n uint32) TraceAttribute {
 	return TraceAttribute{AttrAttempt, int64(n)}
+}
+
+// versionGauges remembers the versions reported before, so one that has
+// emptied drops to 0 and the stranded-work warning is logged once per spell.
+type versionGauges struct {
+	byVersion map[string]bool
+	unserved  map[string]bool
+}
+
+// unfinishedStatuses are the statuses MetricActivitiesByVersion counts.
+var unfinishedStatuses = []any{
+	storage.RecordStatusPending, storage.RecordStatusScheduled, storage.RecordStatusRunning, storage.RecordStatusWaiting,
+}
+
+// sampleVersionGauges sets MetricActivitiesByVersion and
+// MetricActivitiesUnserved, for an engine with a Version.
+func (e *WorkerEngine) sampleVersionGauges(ctx context.Context, g *versionGauges) {
+	served := e.config.servedVersions()
+	qs, ok := e.backend.(storage.QueryStorage)
+	if len(served) == 0 || !ok {
+		return
+	}
+	queue := e.tel.queueName()
+	inQueue := storage.QueryFilter{Field: "queue", Op: storage.OpEq, Value: queue}
+	byVersion, err := e.countByVersion(ctx, qs, storage.QueryFilter{And: []storage.QueryFilter{
+		inQueue, {Field: "status", Op: storage.OpIn, Value: unfinishedStatuses},
+	}})
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("Could not sample activities by version", "queue", queue, "error", err)
+		}
+		return
+	}
+	setVersionGauge(e.metrics, MetricActivitiesByVersion, queue, byVersion, g.byVersion)
+
+	servedAny := make([]any, len(served))
+	for i, v := range served {
+		servedAny[i] = v
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	unserved, err := e.countByVersion(ctx, qs, storage.QueryFilter{And: []storage.QueryFilter{
+		inQueue,
+		{Field: "version", Op: storage.OpExists, Value: true},
+		{Field: "version", Op: storage.OpNin, Value: servedAny},
+		{Or: []storage.QueryFilter{
+			{Field: "status", Op: storage.OpEq, Value: storage.RecordStatusPending},
+			{And: []storage.QueryFilter{
+				{Field: "status", Op: storage.OpIn, Value: []any{storage.RecordStatusScheduled, storage.RecordStatusWaiting}},
+				{Field: "scheduled_for", Op: storage.OpLte, Value: now},
+			}},
+		}},
+	}})
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("Could not sample unserved activities", "queue", queue, "error", err)
+		}
+		return
+	}
+	for v, n := range unserved {
+		if !g.unserved[v] {
+			slog.Warn("Runnable work is pinned to a version this worker does not serve",
+				"queue", queue, "version", v, "count", n)
+		}
+	}
+	for _, v := range served {
+		if _, ok := unserved[v]; !ok {
+			unserved[v] = 0
+		}
+	}
+	setVersionGauge(e.metrics, MetricActivitiesUnserved, queue, unserved, g.unserved)
+}
+
+// countByVersion counts the activities matching filter by version; "" is
+// unstamped.
+func (e *WorkerEngine) countByVersion(ctx context.Context, qs storage.QueryStorage, filter storage.QueryFilter) (map[string]int64, error) {
+	rows, err := qs.AggregateActivities(ctx, storage.AggregateQuery{
+		Filter: &filter, GroupBy: []string{"version"}, Count: true, Limit: 1000,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(rows.Rows))
+	for _, r := range rows.Rows {
+		out[r.Key["version"]] += r.Count
+	}
+	return out, nil
+}
+
+// setVersionGauge reports counts, and 0 for versions reported before and
+// absent now; reported is updated to the versions with a count above 0.
+func setVersionGauge(m LabeledMetricsSink, name, queue string, counts map[string]int64, reported map[string]bool) {
+	for v, n := range counts {
+		m.SetGauge(name, float64(n), MetricLabels{Queue: queue, Version: v})
+	}
+	for v := range reported {
+		if _, ok := counts[v]; !ok {
+			m.SetGauge(name, 0, MetricLabels{Queue: queue, Version: v})
+		}
+	}
+	clear(reported)
+	for v, n := range counts {
+		if n > 0 {
+			reported[v] = true
+		}
+	}
 }

@@ -84,7 +84,7 @@ func benchClaims(b *testing.B, be *PostgresBackend) {
 	types := []string{"t"}
 	b.ResetTimer()
 	for i := range b.N {
-		claims, err := be.DequeueBatch(ctx, fmt.Sprintf("w%d", i), benchBatch, 0, types)
+		claims, err := be.DequeueBatch(ctx, fmt.Sprintf("w%d", i), benchBatch, 0, types, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -258,6 +258,13 @@ var (
 	limitCheck      = fmt.Sprintf(limitCheckSQL, strings.ReplaceAll(claimEligibleSQL, "$3", "$1"), fmt.Sprintf(limitAvailableSQL, "clock_timestamp()"))
 	limitClaimBatch = fmt.Sprintf(limitClaimSQLHead, fmt.Sprintf(limitAvailableSQL, "clock.at"), claimEligibleSQL, claimOrderSQL, `$1 || ':' || a.id::text`)
 	limitClaimOne   = fmt.Sprintf(limitClaimSQLHead, fmt.Sprintf(limitAvailableSQL, "clock.at"), claimEligibleSQL, claimOrderSQL, `$1`)
+
+	// Eligibility is version-filtered in both the precheck and the locked
+	// claim. limitRunningSQL intentionally counts processing across every
+	// version: the concurrency cap belongs to the fleet, not one deployment.
+	limitCheckVersions      = fmt.Sprintf(limitCheckSQL, strings.ReplaceAll(claimEligibleSQL, "$3", "$1")+claimVersionSQL(3), fmt.Sprintf(limitAvailableSQL, "clock_timestamp()"))
+	limitClaimBatchVersions = fmt.Sprintf(limitClaimSQLHead, fmt.Sprintf(limitAvailableSQL, "clock.at"), claimEligibleSQL+claimVersionSQL(6), claimOrderSQL, `$1 || ':' || a.id::text`)
+	limitClaimOneVersions   = fmt.Sprintf(limitClaimSQLHead, fmt.Sprintf(limitAvailableSQL, "clock.at"), claimEligibleSQL+claimVersionSQL(6), claimOrderSQL, `$1`)
 )
 
 // claimPlan splits a claim's types into the limited ones and the rest. With
@@ -299,8 +306,14 @@ func (b *PostgresBackend) planClaim(ctx context.Context, types []string) (*claim
 // claimLimited claims up to limit activities of the plan's limited types.
 // heldBack reports that a limit kept claimable work back. Types whose limit
 // has gone move to the plan's plain part.
-func (b *PostgresBackend) claimLimited(ctx context.Context, p *claimPlan, token string, limit int, batch bool) (claims []storage.DequeuedActivity, heldBack bool, err error) {
-	rows, err := b.pool.Query(ctx, limitCheck, b.queueName, p.limited)
+func (b *PostgresBackend) claimLimited(ctx context.Context, p *claimPlan, token string, limit int, batch bool, versions []string) (claims []storage.DequeuedActivity, heldBack bool, err error) {
+	check := limitCheck
+	checkArgs := []any{b.queueName, p.limited}
+	if len(versions) > 0 {
+		check = limitCheckVersions
+		checkArgs = append(checkArgs, versions)
+	}
+	rows, err := b.pool.Query(ctx, check, checkArgs...)
 	if err != nil {
 		return nil, false, databaseError(err, fmt.Sprintf("Failed to check limits: %v", err))
 	}
@@ -343,6 +356,12 @@ func (b *PostgresBackend) claimLimited(ctx context.Context, p *claimPlan, token 
 	if batch {
 		sql = limitClaimBatch
 	}
+	if len(versions) > 0 {
+		sql = limitClaimOneVersions
+		if batch {
+			sql = limitClaimBatchVersions
+		}
+	}
 	err = pgx.BeginFunc(ctx, b.pool, func(tx pgx.Tx) error {
 		locked, err := tx.Query(ctx, limitLockSQL, b.queueName, ready)
 		if err != nil {
@@ -352,7 +371,11 @@ func (b *PostgresBackend) claimLimited(ctx context.Context, p *claimPlan, token 
 		if err != nil || len(types) == 0 {
 			return err
 		}
-		rows, err := tx.Query(ctx, sql, token, b.defaultLeaseMS.Load(), b.queueName, limit, types)
+		args := []any{token, b.defaultLeaseMS.Load(), b.queueName, limit, types}
+		if len(versions) > 0 {
+			args = append(args, versions)
+		}
+		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err
 		}

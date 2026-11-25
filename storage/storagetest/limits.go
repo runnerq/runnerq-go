@@ -71,7 +71,7 @@ func (s *suite) batch(prefix string, limit int, types ...string) []storage.Deque
 		}
 		return out
 	}
-	got, err := bq.DequeueBatch(s.ctx, prefix, limit, 0, types)
+	got, err := bq.DequeueBatch(s.ctx, prefix, limit, 0, types, nil)
 	if err != nil {
 		s.t.Fatalf("DequeueBatch: %v", err)
 	}
@@ -160,7 +160,7 @@ func testLimitMaxConcurrent(t *testing.T, h Harness) {
 		t.Fatalf("first batch = %v, want the two oldest", claimedIDs(first))
 	}
 	other := s.another()
-	if got, err := other.Dequeue(s.ctx, "w2", 0, []string{"t"}); err != nil || got != nil {
+	if got, err := other.Dequeue(s.ctx, "w2", 0, []string{"t"}, nil); err != nil || got != nil {
 		t.Fatalf("another handle claimed %v (%v) past the limit", got, err)
 	}
 	s.claimNothing("t")
@@ -345,7 +345,7 @@ func testLimitConcurrentClaimers(t *testing.T, h Harness) {
 			for done.Load() < total && ctx.Err() == nil {
 				var claims []storage.DequeuedActivity
 				if batch {
-					got, err := bq.DequeueBatch(ctx, fmt.Sprintf("c%d:%s", i, uuid.NewString()), 3, 0, []string{"t"})
+					got, err := bq.DequeueBatch(ctx, fmt.Sprintf("c%d:%s", i, uuid.NewString()), 3, 0, []string{"t"}, nil)
 					if err != nil {
 						if ctx.Err() == nil {
 							fail(err)
@@ -355,7 +355,7 @@ func testLimitConcurrentClaimers(t *testing.T, h Harness) {
 					claims = got
 				} else {
 					token := fmt.Sprintf("c%d:%s", i, uuid.NewString())
-					a, err := b.Dequeue(ctx, token, 0, []string{"t"})
+					a, err := b.Dequeue(ctx, token, 0, []string{"t"}, nil)
 					if err != nil {
 						if ctx.Err() == nil {
 							fail(err)

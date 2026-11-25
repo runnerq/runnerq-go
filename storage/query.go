@@ -67,6 +67,7 @@ const (
 	RecordEventRunNow          = "activity.run_now"
 	RecordEventRescheduled     = "activity.rescheduled"
 	RecordEventPriorityChanged = "activity.priority_changed"
+	RecordEventRepinned        = "activity.repinned"
 )
 
 const (
@@ -160,9 +161,11 @@ type ActivityRecord struct {
 	LeaseExpiresAt *time.Time
 	// ExecutorID is the engine instance running it (running activities only).
 	ExecutorID string
-	Wait       *RecordWait
-	Metadata   map[string]string
-	LastError  *RecordError // only with Include.LastError
+	// Version is the code version it is pinned to; empty when unstamped.
+	Version   string
+	Wait      *RecordWait
+	Metadata  map[string]string
+	LastError *RecordError // only with Include.LastError
 	// Payload and Result's data (only with Include.Payload and
 	// Include.Result) are plain JSON, as is StepEntry.Data: backends unwrap
 	// other encodings, such as the "json" part of the TypeScript SDK's

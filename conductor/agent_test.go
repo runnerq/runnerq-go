@@ -349,6 +349,20 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
+// With a code version, the "version" label is that version, whatever labels
+// the engine and the agent set.
+func TestHelloReportsCodeVersion(t *testing.T) {
+	g := newFakeGateway(t, wire.SessionConfig{})
+	e := runnerq.NewWorkerEngineWithBackend(nopStorage{}, runnerq.WorkerConfig{
+		QueueName: "q1", MaxConcurrentActivities: 1, Labels: map[string]string{"version": "label"}, Version: "2026.11.2",
+	})
+	e.RegisterActivity(&Echo{})
+	startAgent(t, e, g, Config{Labels: map[string]string{"version": "agent", "region": "eu"}})
+	if l := g.waitHello().Executor.Labels; l["version"] != "2026.11.2" || l["region"] != "eu" {
+		t.Fatalf("labels %v, want version 2026.11.2 and region eu", l)
+	}
+}
+
 func TestHelloDescribesExecutor(t *testing.T) {
 	g := newFakeGateway(t, wire.SessionConfig{})
 	e := runnerq.NewWorkerEngineWithBackend(nopStorage{}, runnerq.WorkerConfig{

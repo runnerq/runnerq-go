@@ -442,6 +442,19 @@ func (b *PostgresBackend) signalEnqueued(a *storage.QueuedActivity) {
 	}
 }
 
+// codeVersionInsertSQL is an inserted activity's code_version: a root's own
+// ($20), a child's root's, whatever the spawner passed (runnerq-spec
+// versions.md).
+const codeVersionInsertSQL = `CASE WHEN $16::uuid IS NULL THEN $20::text
+				ELSE (SELECT r.code_version FROM runnerq_activities r WHERE r.id = $17 AND r.queue_name = $2) END`
+
+func storedCodeVersion(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
 // enqueueStmts are returned rather than run so callers can make the enqueue
 // atomic with other writes (e.g. the idempotency-key claim).
 func (b *PostgresBackend) enqueueStmts(a *storage.QueuedActivity) ([]stmt, error) {
@@ -472,8 +485,9 @@ func (b *PostgresBackend) enqueueStmts(a *storage.QueuedActivity) ([]stmt, error
 				created_at, scheduled_at, retry_count, max_retries,
 				timeout_seconds, retry_delay_seconds, max_retry_delay_seconds,
 				metadata, idempotency_key,
-				parent_activity_id, root_activity_id, depth
-			) VALUES ($1, $2, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+				parent_activity_id, root_activity_id, depth, code_version
+			) VALUES ($1, $2, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+				` + codeVersionInsertSQL + `)
 		)
 		INSERT INTO runnerq_inputs (activity_id, queue_name, payload, serialization)
 		VALUES ($1, $2, COALESCE($4::jsonb, 'null'::jsonb), $19)`,
@@ -483,7 +497,8 @@ func (b *PostgresBackend) enqueueStmts(a *storage.QueuedActivity) ([]stmt, error
 			int64(a.TimeoutSeconds), int64(a.RetryDelaySeconds),
 			int64(a.MaxRetryDelaySeconds),
 			metadataJSON, idempotencyKey,
-			a.ParentActivityID, rootID, int16(a.Depth), storedSerialization(a.Serialization)},
+			a.ParentActivityID, rootID, int16(a.Depth), storedSerialization(a.Serialization),
+			storedCodeVersion(a.CodeVersion)},
 		"Failed to enqueue activity"}}
 
 	if a.ParentActivityID != nil {
@@ -538,7 +553,7 @@ const (
 			priority, retry_count, max_retries,
 			timeout_seconds, retry_delay_seconds, max_retry_delay_seconds,
 			scheduled_at, metadata, idempotency_key, created_at,
-			parent_activity_id, root_activity_id, depth, current_worker_id, lease_deadline_ms`
+			parent_activity_id, root_activity_id, depth, code_version, current_worker_id, lease_deadline_ms`
 	// Single claim: $1 worker token, $2 default lease ms, $3 queue, $4 type
 	// filter.
 	dequeueSQLHead = `
@@ -554,12 +569,6 @@ const (
 			FOR UPDATE SKIP LOCKED
 		)
 		RETURNING ` + claimColumnsSQL
-
-	dequeueSQLAllTypes  = dequeueSQLHead + dequeueSQLTail
-	dequeueSQLOneType   = dequeueSQLHead + ` AND activity_type = $4` + dequeueSQLTail
-	dequeueSQLManyTypes = dequeueSQLHead + ` AND activity_type = ANY($4)` + dequeueSQLTail
-	// Untyped claim of a queue with limits: every type but the limited ones.
-	dequeueSQLExceptTypes = dequeueSQLHead + ` AND activity_type <> ALL($4)` + dequeueSQLTail
 
 	// Batch claim: $1 token prefix, $2 default lease ms, $3 queue, $4 limit,
 	// $5 type filter. Each row's token is prefix:id, so rows are fenced
@@ -579,12 +588,74 @@ const (
 		) AS c
 		WHERE a.id = c.claim_id
 		RETURNING ` + claimColumnsSQL
-
-	dequeueBatchSQLAllTypes    = dequeueBatchSQLHead + dequeueBatchSQLTail
-	dequeueBatchSQLOneType     = dequeueBatchSQLHead + ` AND activity_type = $5` + dequeueBatchSQLTail
-	dequeueBatchSQLManyTypes   = dequeueBatchSQLHead + ` AND activity_type = ANY($5)` + dequeueBatchSQLTail
-	dequeueBatchSQLExceptTypes = dequeueBatchSQLHead + ` AND activity_type <> ALL($5)` + dequeueBatchSQLTail
 )
+
+// claimVersionSQL is version pinning's claim predicate (runnerq-spec
+// versions.md), added only for a worker that has a version. code_version is
+// in no index, so it filters the candidates of the same ordered index walk,
+// as a multi-type filter does.
+func claimVersionSQL(param int) string {
+	return fmt.Sprintf(` AND (code_version IS NULL OR code_version = ANY($%d))`, param)
+}
+
+// claimSQL is the single (batch false) or batch claim for a type filter of
+// n types (0, 1 or many) and, when versions, the version predicate. Except
+// excludes the limited types when an untyped claim fills from unlimited work.
+// The filter arguments follow the fixed ones: types, then versions.
+func claimSQL(batch bool, types int, versions, except bool) string {
+	mode := min(types, 2)
+	if except {
+		mode = 3
+	}
+	return claimSQLs[b2i(batch)][mode][b2i(versions)]
+}
+
+var claimSQLs = func() (out [2][4][2]string) {
+	for batch := range 2 {
+		head, tail, next := dequeueSQLHead, dequeueSQLTail, 4
+		if batch == 1 {
+			head, tail, next = dequeueBatchSQLHead, dequeueBatchSQLTail, 5
+		}
+		for types := range 4 {
+			filter, n := "", next
+			switch types {
+			case 1:
+				filter, n = fmt.Sprintf(` AND activity_type = $%d`, next), next+1
+			case 2:
+				filter, n = fmt.Sprintf(` AND activity_type = ANY($%d)`, next), next+1
+			case 3:
+				filter, n = fmt.Sprintf(` AND activity_type <> ALL($%d)`, next), next+1
+			}
+			out[batch][types][0] = head + filter + tail
+			out[batch][types][1] = head + filter + claimVersionSQL(n) + tail
+		}
+	}
+	return out
+}()
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// claimArgs appends the type and version filter arguments claimSQL expects.
+func claimArgs(args []any, activityTypes, versions []string, except bool) []any {
+	switch {
+	case except:
+		args = append(args, activityTypes)
+	case len(activityTypes) == 0:
+	case len(activityTypes) == 1:
+		args = append(args, activityTypes[0])
+	default:
+		args = append(args, activityTypes)
+	}
+	if len(versions) > 0 {
+		args = append(args, versions)
+	}
+	return args
+}
 
 func scanClaim(row pgx.Row) (storage.DequeuedActivity, error) {
 	var ar activityRow
@@ -596,7 +667,7 @@ func scanClaim(row pgx.Row) (storage.DequeuedActivity, error) {
 		&ar.retryDelaySeconds, &ar.maxRetryDelaySeconds,
 		&ar.scheduledAt, &ar.metadata,
 		&ar.idempotencyKey, &ar.createdAt,
-		&ar.parentActivityID, &ar.rootActivityID, &ar.depth,
+		&ar.parentActivityID, &ar.rootActivityID, &ar.depth, &ar.codeVersion,
 		&leaseID, &leaseDeadlineMS); err != nil {
 		return storage.DequeuedActivity{}, err
 	}
@@ -652,12 +723,12 @@ func (b *PostgresBackend) waitForClaim(ctx context.Context, maxBlock time.Durati
 	}
 }
 
-func (b *PostgresBackend) Dequeue(ctx context.Context, workerID string, maxBlock time.Duration, activityTypes []string) (*storage.QueuedActivity, error) {
+func (b *PostgresBackend) Dequeue(ctx context.Context, workerID string, maxBlock time.Duration, activityTypes, versions []string) (*storage.QueuedActivity, error) {
 	var claimed *storage.QueuedActivity
 	err := b.waitForClaim(ctx, maxBlock, func() (bool, bool, error) {
 		var heldBack bool
 		var err error
-		claimed, heldBack, err = b.dequeueOnce(ctx, workerID, activityTypes)
+		claimed, heldBack, err = b.dequeueOnce(ctx, workerID, activityTypes, versions)
 		return claimed != nil, heldBack, err
 	})
 	if err != nil {
@@ -677,7 +748,7 @@ func claimContext(ctx context.Context) (context.Context, context.CancelFunc, err
 	return c, cancel, nil
 }
 
-func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, activityTypes []string) (*storage.QueuedActivity, bool, error) {
+func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, activityTypes, versions []string) (*storage.QueuedActivity, bool, error) {
 	ctx, cancel, err := claimContext(ctx)
 	if err != nil {
 		return nil, false, err
@@ -690,7 +761,7 @@ func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, acti
 	var heldBack bool
 	if plan != nil {
 		var claims []storage.DequeuedActivity
-		claims, heldBack, err = b.claimLimited(ctx, plan, workerID, 1, false)
+		claims, heldBack, err = b.claimLimited(ctx, plan, workerID, 1, false, versions)
 		if err != nil {
 			return nil, false, err
 		}
@@ -703,23 +774,15 @@ func (b *PostgresBackend) dequeueOnce(ctx context.Context, workerID string, acti
 		}
 	}
 	lease := b.defaultLeaseMS.Load()
-	var row pgx.Row
+	except := false
 	switch {
 	case plan != nil && plan.untyped && len(plan.except) > 0:
-		row = b.pool.QueryRow(ctx, dequeueSQLExceptTypes, workerID, lease, b.queueName, plan.except)
+		activityTypes, except = plan.except, true
 	case plan != nil && !plan.untyped:
 		activityTypes = plan.rest
-		fallthrough
-	default:
-		switch len(activityTypes) {
-		case 0:
-			row = b.pool.QueryRow(ctx, dequeueSQLAllTypes, workerID, lease, b.queueName)
-		case 1:
-			row = b.pool.QueryRow(ctx, dequeueSQLOneType, workerID, lease, b.queueName, activityTypes[0])
-		default:
-			row = b.pool.QueryRow(ctx, dequeueSQLManyTypes, workerID, lease, b.queueName, activityTypes)
-		}
 	}
+	row := b.pool.QueryRow(ctx, claimSQL(false, len(activityTypes), len(versions) > 0, except),
+		claimArgs([]any{workerID, lease, b.queueName}, activityTypes, versions, except)...)
 
 	claim, err := scanClaim(row)
 	if err != nil {
@@ -742,7 +805,7 @@ func logClaim(a *storage.QueuedActivity) {
 // DequeueBatch claims up to limit rows in one UPDATE, each with the token
 // "<workerIDPrefix>:<activity id>". A claim that includes limited types
 // claims those first, under their limits, then the rest.
-func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix string, limit int, maxBlock time.Duration, activityTypes []string) ([]storage.DequeuedActivity, error) {
+func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix string, limit int, maxBlock time.Duration, activityTypes, versions []string) ([]storage.DequeuedActivity, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -750,7 +813,7 @@ func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix strin
 	err := b.waitForClaim(ctx, maxBlock, func() (bool, bool, error) {
 		var heldBack bool
 		var err error
-		claims, heldBack, err = b.dequeueBatchOnce(ctx, workerIDPrefix, limit, activityTypes)
+		claims, heldBack, err = b.dequeueBatchOnce(ctx, workerIDPrefix, limit, activityTypes, versions)
 		return len(claims) > 0, heldBack, err
 	})
 	if err != nil {
@@ -759,7 +822,7 @@ func (b *PostgresBackend) DequeueBatch(ctx context.Context, workerIDPrefix strin
 	return claims, nil
 }
 
-func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix string, limit int, activityTypes []string) ([]storage.DequeuedActivity, bool, error) {
+func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix string, limit int, activityTypes, versions []string) ([]storage.DequeuedActivity, bool, error) {
 	ctx, cancel, err := claimContext(ctx)
 	if err != nil {
 		return nil, false, err
@@ -772,7 +835,7 @@ func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix s
 	var limited []storage.DequeuedActivity
 	var heldBack bool
 	if plan != nil {
-		limited, heldBack, err = b.claimLimited(ctx, plan, workerIDPrefix, limit, true)
+		limited, heldBack, err = b.claimLimited(ctx, plan, workerIDPrefix, limit, true, versions)
 		if err != nil {
 			return nil, false, err
 		}
@@ -781,24 +844,16 @@ func (b *PostgresBackend) dequeueBatchOnce(ctx context.Context, workerIDPrefix s
 			return sortClaims(limited), heldBack, nil
 		}
 	}
-	var rows pgx.Rows
 	lease := b.defaultLeaseMS.Load()
+	except := false
 	switch {
 	case plan != nil && plan.untyped && len(plan.except) > 0:
-		rows, err = b.pool.Query(ctx, dequeueBatchSQLExceptTypes, workerIDPrefix, lease, b.queueName, limit, plan.except)
+		activityTypes, except = plan.except, true
 	case plan != nil && !plan.untyped:
 		activityTypes = plan.rest
-		fallthrough
-	default:
-		switch len(activityTypes) {
-		case 0:
-			rows, err = b.pool.Query(ctx, dequeueBatchSQLAllTypes, workerIDPrefix, lease, b.queueName, limit)
-		case 1:
-			rows, err = b.pool.Query(ctx, dequeueBatchSQLOneType, workerIDPrefix, lease, b.queueName, limit, activityTypes[0])
-		default:
-			rows, err = b.pool.Query(ctx, dequeueBatchSQLManyTypes, workerIDPrefix, lease, b.queueName, limit, activityTypes)
-		}
 	}
+	rows, err := b.pool.Query(ctx, claimSQL(true, len(activityTypes), len(versions) > 0, except),
+		claimArgs([]any{workerIDPrefix, lease, b.queueName, limit}, activityTypes, versions, except)...)
 	if err != nil {
 		return nil, false, databaseError(err, fmt.Sprintf("Failed to batch dequeue: %v", err))
 	}
@@ -1716,7 +1771,7 @@ func (b *PostgresBackend) ListDeadLetter(ctx context.Context, offset, limit int)
 			last_worker_id, retry_count, max_retries, timeout_seconds,
 			retry_delay_seconds, last_error, last_error_at, metadata,
 			idempotency_key, lease_deadline_ms,
-			parent_activity_id, root_activity_id, depth
+			parent_activity_id, root_activity_id, depth, code_version
 		FROM runnerq_activities
 		WHERE queue_name = $1 AND status = 'dead_letter'
 		ORDER BY completed_at DESC
@@ -1761,7 +1816,7 @@ func (b *PostgresBackend) GetActivity(ctx context.Context, activityID uuid.UUID)
 			last_worker_id, retry_count, max_retries, timeout_seconds,
 			retry_delay_seconds, last_error, last_error_at, metadata,
 			idempotency_key, lease_deadline_ms,
-			parent_activity_id, root_activity_id, depth
+			parent_activity_id, root_activity_id, depth, code_version
 		FROM runnerq_activities
 		WHERE id = $1 AND queue_name = $2`,
 		activityID, b.queueName)
@@ -1822,7 +1877,7 @@ func (b *PostgresBackend) GetChildren(ctx context.Context, parentID uuid.UUID, o
 			last_worker_id, retry_count, max_retries, timeout_seconds,
 			retry_delay_seconds, last_error, last_error_at, metadata,
 			idempotency_key, lease_deadline_ms,
-			parent_activity_id, root_activity_id, depth
+			parent_activity_id, root_activity_id, depth, code_version
 		FROM runnerq_activities
 		WHERE queue_name = $1 AND parent_activity_id = $2
 		ORDER BY created_at ASC
@@ -1882,7 +1937,7 @@ func (b *PostgresBackend) GetSubtree(ctx context.Context, rootID uuid.UUID) ([]s
 			last_worker_id, retry_count, max_retries, timeout_seconds,
 			retry_delay_seconds, last_error, last_error_at, metadata,
 			idempotency_key, lease_deadline_ms,
-			parent_activity_id, root_activity_id, depth
+			parent_activity_id, root_activity_id, depth, code_version
 		FROM runnerq_activities
 		WHERE queue_name = $1 AND (id = $2 OR (root_activity_id = $2 AND parent_activity_id IS NOT NULL))
 		ORDER BY depth ASC, created_at ASC`,
@@ -1921,6 +1976,7 @@ type activityRow struct {
 	parentActivityID     *uuid.UUID
 	rootActivityID       *uuid.UUID
 	depth                int16
+	codeVersion          *string
 }
 
 func (r *activityRow) toQueuedActivity() *storage.QueuedActivity {
@@ -1963,7 +2019,15 @@ func (r *activityRow) toQueuedActivity() *storage.QueuedActivity {
 		ParentActivityID:     r.parentActivityID,
 		RootActivityID:       rootID,
 		Depth:                uint16(r.depth),
+		CodeVersion:          deref(r.codeVersion),
 	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func (r *activityRow) toSnapshot() storage.ActivitySnapshot {
@@ -2029,6 +2093,7 @@ func (r *activityRow) toSnapshot() storage.ActivitySnapshot {
 		ParentActivityID:  r.parentActivityID,
 		RootActivityID:    r.rootActivityID,
 		Depth:             uint16(r.depth),
+		CodeVersion:       r.codeVersion,
 	}
 }
 
@@ -2042,7 +2107,7 @@ func (b *PostgresBackend) scanSnapshots(rows pgx.Rows) ([]storage.ActivitySnapsh
 			&r.currentWorkerID, &r.lastWorkerID, &r.retryCount, &r.maxRetries,
 			&r.timeoutSeconds, &r.retryDelaySeconds, &r.lastError, &r.lastErrorAt,
 			&r.metadata, &r.idempotencyKey, &r.leaseDeadlineMS,
-			&r.parentActivityID, &r.rootActivityID, &r.depth)
+			&r.parentActivityID, &r.rootActivityID, &r.depth, &r.codeVersion)
 		if err != nil {
 			return nil, databaseError(err, fmt.Sprintf("Failed to scan row: %v", err))
 		}

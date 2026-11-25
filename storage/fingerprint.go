@@ -37,7 +37,7 @@ func CommandFingerprint(cmd Command) string {
 			m[k] = true
 		}
 	}
-	for k, v := range map[string]string{"reason": cmd.Reason, "name": cmd.SignalName} {
+	for k, v := range map[string]string{"reason": cmd.Reason, "name": cmd.SignalName, "version": cmd.Version} {
 		if v != "" {
 			m[k] = v
 		}

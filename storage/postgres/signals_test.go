@@ -42,7 +42,7 @@ func TestBlockingDequeueWakesAcrossProcesses(t *testing.T) {
 	}()
 
 	start := time.Now()
-	claimed, err := consumer.Dequeue(ctx, "w1", 10*time.Second, nil)
+	claimed, err := consumer.Dequeue(ctx, "w1", 10*time.Second, nil, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("dequeue: %v", err)
@@ -78,7 +78,7 @@ func TestWaitForResultAcrossProcesses(t *testing.T) {
 
 	go func() {
 		time.Sleep(400 * time.Millisecond)
-		claimed, err := worker.Dequeue(ctx, "w1", time.Second, nil)
+		claimed, err := worker.Dequeue(ctx, "w1", time.Second, nil, nil)
 		if err != nil || claimed == nil {
 			t.Errorf("worker dequeue: claimed=%v err=%v", claimed, err)
 			return
@@ -120,7 +120,7 @@ func TestWaitForResultAlreadyStored(t *testing.T) {
 	if err := b.Enqueue(ctx, a); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if claimed, err := b.Dequeue(ctx, "w1", time.Second, nil); err != nil || claimed == nil {
+	if claimed, err := b.Dequeue(ctx, "w1", time.Second, nil, nil); err != nil || claimed == nil {
 		t.Fatalf("dequeue: claimed=%v err=%v", claimed, err)
 	}
 	if err := b.AckSuccess(ctx, a.ID, []byte(`"v"`), "w1"); err != nil {

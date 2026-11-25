@@ -22,8 +22,12 @@ type Info struct {
 	StartedAt      time.Time
 	Hostname       string
 	SDK            SDK
-	// Labels are tags (region, deploy version) from WorkerConfig.Labels.
+	// Labels are tags (region, deploy version) from WorkerConfig.Labels,
+	// with "version" set to Version when there is one.
 	Labels map[string]string
+	// Version is the code version the executor runs (WorkerConfig.Version);
+	// empty when it has none.
+	Version string
 }
 
 // SDK names the RunnerQ SDK the executor runs.

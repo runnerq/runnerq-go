@@ -70,14 +70,15 @@ type claimedActivity struct {
 	leaseID  string
 }
 
-// activityTypeFilter lets Start set the claim filter once handlers are known.
-type activityTypeFilter interface {
-	setActivityTypes(types []string)
+// claimFilter lets Start set the claim filter once handlers are known.
+type claimFilter interface {
+	setClaimFilter(types, versions []string)
 }
 
 type backendQueueAdapter struct {
 	backend       storage.Storage
 	activityTypes []string
+	versions      []string
 }
 
 type batchBackendQueueAdapter struct {
@@ -95,8 +96,8 @@ func newBackendQueueAdapter(backend storage.Storage, activityTypes []string) act
 	return base
 }
 
-func (a *backendQueueAdapter) setActivityTypes(types []string) {
-	a.activityTypes = types
+func (a *backendQueueAdapter) setClaimFilter(types, versions []string) {
+	a.activityTypes, a.versions = types, versions
 }
 
 func activityToQueued(a *activity) storage.QueuedActivity {
@@ -124,6 +125,7 @@ func activityToQueued(a *activity) storage.QueuedActivity {
 		ParentActivityID:     a.ParentActivityID,
 		RootActivityID:       a.RootActivityID,
 		Depth:                a.Depth,
+		CodeVersion:          a.CodeVersion,
 	}
 }
 
@@ -157,6 +159,7 @@ func queuedToActivity(q *storage.QueuedActivity) *activity {
 		ParentActivityID:     q.ParentActivityID,
 		RootActivityID:       rootID,
 		Depth:                q.Depth,
+		CodeVersion:          q.CodeVersion,
 	}
 }
 
@@ -198,7 +201,7 @@ func (a *backendQueueAdapter) Dequeue(ctx context.Context, timeout time.Duration
 	if types == nil {
 		types = a.activityTypes
 	}
-	q, err := a.backend.Dequeue(ctx, workerID, timeout, types)
+	q, err := a.backend.Dequeue(ctx, workerID, timeout, types, a.versions)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +215,7 @@ func (a *batchBackendQueueAdapter) DequeueBatch(ctx context.Context, limit int, 
 	if types == nil {
 		types = a.activityTypes
 	}
-	claims, err := a.batch.DequeueBatch(ctx, workerIDPrefix, limit, timeout, types)
+	claims, err := a.batch.DequeueBatch(ctx, workerIDPrefix, limit, timeout, types, a.versions)
 	if err != nil {
 		return nil, err
 	}
