@@ -27,10 +27,14 @@ func SignalActivity(ctx context.Context, backend storage.Storage, activityID uui
 
 // Signal is SignalActivity on this engine's backend, traced by its Tracer.
 func (e *WorkerEngine) Signal(ctx context.Context, activityID uuid.UUID, name string, payload json.RawMessage) error {
-	ctx, end := startSpan(ctx, e.tel.tracerOf(), SpanSignalSend, "", func() []TraceAttribute {
+	return tracedSignal(ctx, e.tel, e.backend, activityID, name, payload)
+}
+
+func tracedSignal(ctx context.Context, tel *telemetry, backend storage.Storage, activityID uuid.UUID, name string, payload json.RawMessage) error {
+	ctx, end := startSpan(ctx, tel.tracerOf(), SpanSignalSend, "", func() []TraceAttribute {
 		return []TraceAttribute{{AttrActivityID, activityID.String()}, {AttrSignalName, name}}
 	})
-	err := SignalActivity(ctx, e.backend, activityID, name, payload)
+	err := SignalActivity(ctx, backend, activityID, name, payload)
 	if err != nil {
 		end(OutcomeError, err)
 	} else {
@@ -68,14 +72,18 @@ func SignalActivityByKey(ctx context.Context, backend storage.Storage, activityT
 // SignalByKey is SignalActivityByKey on this engine's backend, delivered
 // through Signal.
 func (e *WorkerEngine) SignalByKey(ctx context.Context, activityType string, idempotencyKey string, name string, payload json.RawMessage) error {
+	return tracedSignalByKey(ctx, e.tel, e.backend, activityType, idempotencyKey, name, payload)
+}
+
+func tracedSignalByKey(ctx context.Context, tel *telemetry, backend storage.Storage, activityType, idempotencyKey, name string, payload json.RawMessage) error {
 	if name == "" || activityType == "" || idempotencyKey == "" {
-		return SignalActivityByKey(ctx, e.backend, activityType, idempotencyKey, name, payload)
+		return SignalActivityByKey(ctx, backend, activityType, idempotencyKey, name, payload)
 	}
-	activityID, err := e.backend.LookupIdempotencyActivityID(ctx, storage.BusinessIdempotencyKey(idempotencyKey, activityType))
+	activityID, err := backend.LookupIdempotencyActivityID(ctx, storage.BusinessIdempotencyKey(idempotencyKey, activityType))
 	if err != nil {
 		return signalDeliveryError(err)
 	}
-	return e.Signal(ctx, activityID, name, payload)
+	return tracedSignal(ctx, tel, backend, activityID, name, payload)
 }
 
 // signalDeliveryError maps a storage not-found to ErrActivityNotFoundW.
