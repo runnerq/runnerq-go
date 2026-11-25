@@ -80,6 +80,8 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   traceparent) and signals, as an engine's tracer does. `Client.Signal` and
   `Client.SignalByKey` on an engine's client are now traced by the engine's
   tracer, like `engine.Signal`.
+- `MetricScheduleFires` (`schedule_fires`, label `queue`): activities
+  enqueued by firing due schedules, now in runnerq-spec's metric catalog.
 
 ### Changed
 
