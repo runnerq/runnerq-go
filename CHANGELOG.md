@@ -75,6 +75,8 @@ Everything on `main` since v0.5.1. Breaking for v0.5.1 users: read
   including a mixed Go/TypeScript one; the dialect, time zones, daylight
   saving and catch-up follow runnerq-spec's `schedules.md`. Needs schema
   migration `0003_schedules`.
+- `MetricScheduleFires` (`schedule_fires`, label `queue`): activities
+  enqueued by firing due schedules, now in runnerq-spec's metric catalog.
 
 ### Changed
 
