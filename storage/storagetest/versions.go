@@ -90,7 +90,10 @@ func testLimitedVersionedClaim(t *testing.T, h Harness) {
 				}
 				var got []storage.DequeuedActivity
 				if batch {
-					bq := need[storage.BatchQueueStorage](t, s.b)
+					bq, ok := s.b.(storage.BatchQueueStorage)
+					if !ok {
+						t.Skip("backend does not implement storage.BatchQueueStorage")
+					}
 					var err error
 					got, err = bq.DequeueBatch(s.ctx, "batch", 10, 0, types, servesA)
 					if err != nil {
