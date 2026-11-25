@@ -1,6 +1,6 @@
 // Command chaosworker is the Go SDK's worker for runnerq-spec's chaos
 // harness (tools/chaos/README.md in runnerq-spec). "work" runs an engine
-// serving <prefix>.flow; "client" enqueues roots and delivers signals for the
+// serving <prefix>.flow and <prefix>.limited; "client" enqueues roots and delivers signals for the
 // harness, one JSON request per stdin line.
 package main
 
@@ -24,7 +24,7 @@ import (
 
 type env struct {
 	dsn, queue, prefix, worker string
-	concurrency                int
+	concurrency, limit         int
 	leaseMS                    int64
 }
 
@@ -39,6 +39,7 @@ func main() {
 		worker:      os.Getenv("RUNNERQ_CHAOS_WORKER"),
 		concurrency: atoi(os.Getenv("RUNNERQ_CHAOS_CONCURRENCY"), 8),
 		leaseMS:     int64(atoi(os.Getenv("RUNNERQ_CHAOS_LEASE_MS"), 60_000)),
+		limit:       atoi(os.Getenv("RUNNERQ_CHAOS_LIMIT"), 2),
 	}
 	if e.dsn == "" || e.queue == "" || e.prefix == "" {
 		fatal(errors.New("RUNNERQ_CHAOS_DSN, RUNNERQ_CHAOS_QUEUE and RUNNERQ_CHAOS_PREFIX are required"))
@@ -87,7 +88,9 @@ func work(e env) error {
 	if err != nil {
 		return err
 	}
-	engine.RegisterActivityWithName(e.prefix+".flow", &flow{ledger: ledger, queue: e.queue, worker: e.worker})
+	f := &flow{ledger: ledger, queue: e.queue, worker: e.worker}
+	engine.RegisterActivityWithName(e.prefix+".flow", f)
+	engine.RegisterActivityWithName(e.prefix+".limited", f, runnerq.MaxConcurrent(e.limit))
 
 	started := make(chan error, 1)
 	go func() { started <- engine.Start(ctx) }()
